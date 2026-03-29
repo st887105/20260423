@@ -1,110 +1,118 @@
 /**
  * ============================================================================
- * 車城國小學力檢測考古題輔助系統 - 後端邏輯 (API 版本)
- * v4.0 - 前後端分離架構
+ * 車城國小學力檢測考古題輔助系統 - 後端邏輯
+ * v5.0 - 多科目 + PDF 教材出題版
+ * ============================================================================
+ * 新增功能：
+ *   1. 支援數學科 / 國語科（科目參數化）
+ *   2. 支援從 Google Drive PDF 讀取內容並讓 Gemini 依內容出題
+ *   3. Bank 試算表新增「科目」欄位（第 9 欄）
  * ============================================================================
  */
 
 // ==========================================
-// API 入口 (供 GitHub Pages 呼叫)
+// API 入口 (供 GitHub Pages 前端呼叫)
 // ==========================================
 function doPost(e) {
   try {
     const params = JSON.parse(e.postData.contents);
     const action = params.action;
-    const data = params.data || {};
-    let result = null;
+    const data   = params.data || {};
+    let result   = null;
 
     switch (action) {
-      case 'getTasks': result = getTasks(); break;
-      case 'getStudents': result = getStudents(data.taskName); break;
-      case 'verifyAdmin': result = verifyAdmin(data.pwd); break;
-      case 'getQuizSettings': result = getQuizSettings(); break;
-      case 'updateQuizSettings': result = updateQuizSettings(data.count); break;
-      case 'setupDatabase': result = setupDatabase(); break;
-      case 'clearBankCache': result = clearBankCache(); break;
-      case 'uploadTaskData': result = uploadTaskData(data.taskName, data.grade, data.studentData, data.uniqueNodes); break;
-      case 'generateBatch': result = generateBatch(data.nodesArray, data.grade, data.batchIndex); break;
-      case 'generateQuiz': result = generateQuiz(data.weakNode, data.taskName); break;
-      case 'submitQuizResult': result = submitQuizResult(data.payload); break;
-      case 'getTaskResults': result = getTaskResults(data.taskName); break;
-      case 'getQuestionErrorRates': result = getQuestionErrorRates(data.taskName); break;
-      case 'analyzeClassWeakNodes': result = analyzeClassWeakNodes(data.taskName); break;
-      case 'generateTeachingWorksheet': result = generateTeachingWorksheet(data.topNodes, data.grade); break;
-      default: throw new Error('未知的 API 請求');
+      case 'getTasks':                  result = getTasks(); break;
+      case 'getStudents':               result = getStudents(data.taskName); break;
+      case 'verifyAdmin':               result = verifyAdmin(data.pwd); break;
+      case 'getQuizSettings':           result = getQuizSettings(); break;
+      case 'updateQuizSettings':        result = updateQuizSettings(data.count); break;
+      case 'setupDatabase':             result = setupDatabase(); break;
+      case 'clearBankCache':            result = clearBankCache(); break;
+      case 'uploadTaskData':            result = uploadTaskData(data.taskName, data.grade, data.subject, data.studentData, data.uniqueNodes); break;
+      case 'generateBatch':             result = generateBatch(data.nodesArray, data.grade, data.subject, data.batchIndex); break;
+      case 'generateBatchFromFolder':   result = generateBatchFromFolder(data.folderId, data.nodesArray, data.grade, data.subject, data.batchIndex); break;
+      case 'scanFolder':                result = scanFolder(data.folderId); break;
+      case 'generateQuiz':              result = generateQuiz(data.weakNode, data.taskName); break;
+      case 'submitQuizResult':          result = submitQuizResult(data.payload); break;
+      case 'getTaskResults':            result = getTaskResults(data.taskName); break;
+      case 'getQuestionErrorRates':     result = getQuestionErrorRates(data.taskName); break;
+      case 'analyzeClassWeakNodes':     result = analyzeClassWeakNodes(data.taskName); break;
+      case 'generateTeachingWorksheet': result = generateTeachingWorksheet(data.topNodes, data.grade, data.subject); break;
+      default: throw new Error('未知的 API 請求：' + action);
     }
 
-    return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: result }))
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: 'success', data: result }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: error.message || String(error) }))
+    return ContentService
+      .createTextOutput(JSON.stringify({ status: 'error', message: error.message || String(error) }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
-function doOptions(e) {
-  return ContentService.createTextOutput("")
-    .setMimeType(ContentService.MimeType.TEXT)
-    .setHeaders({
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Max-Age": "86400"
-    });
-}
-
-// 為了讓您也能從原本的網址預覽，保留簡單的 doGet
 function doGet(e) {
-  return ContentService.createTextOutput("API 伺服器運作中！請從 GitHub Pages 前端網頁連線。");
+  return ContentService.createTextOutput(
+    "✅ 車城國小 AI 補救系統 API 伺服器運作中（v5.0 多科目+PDF版）\n請從 GitHub Pages 前端網頁連線。"
+  );
 }
 
 
 // ==========================================
-// 1. 資料庫初始化
+// 1. 資料庫初始化（Bank 新增科目欄）
 // ==========================================
 function setupDatabase() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ['Config','Bank','History','Results'].forEach(sheetName => {
+
+  ['Config', 'Bank', 'History', 'Results'].forEach(sheetName => {
     let sheet = ss.getSheetByName(sheetName);
     if (!sheet) {
       sheet = ss.insertSheet(sheetName);
       if (sheetName === 'Config') {
-        sheet.appendRow(['Key','Value']);
-        sheet.appendRow(['AdminPassword','1234']);
-        sheet.appendRow(['GeminiAPIKey','請在此貼上您的API金鑰']);
-        sheet.appendRow(['QuizCount','10']);
+        sheet.appendRow(['Key', 'Value']);
+        sheet.appendRow(['AdminPassword', '1234']);
+        sheet.appendRow(['GeminiAPIKey', '請在此貼上您的API金鑰']);
+        sheet.appendRow(['QuizCount', '10']);
+        // PDF 資料夾設定：貼上 Google Drive 資料夾 ID（含所有教材 PDF）
+        sheet.appendRow(['PdfFolderId', '（選填）貼上 Google Drive 資料夾 ID，系統將自動讀取資料夾內所有 PDF 出題']);
       } else if (sheetName === 'Bank') {
-        sheet.appendRow(['ID','知識節點','題目','類型(single/fill)','選項(JSON陣列)','正解','難度','適用年級']);
+        // v5.0：新增第 9 欄「科目」
+        sheet.appendRow(['ID', '知識節點', '題目', '類型(single/fill)', '選項(JSON陣列)', '正解', '難度', '適用年級', '科目']);
       } else if (sheetName === 'History') {
-        sheet.appendRow(['上傳時間','任務名稱','適用年級','學生人數','班級弱點節點']);
+        // 新增科目欄
+        sheet.appendRow(['上傳時間', '任務名稱', '適用年級', '科目', '學生人數', '班級弱點節點']);
       } else if (sheetName === 'Results') {
-        sheet.appendRow(['測驗時間','任務名稱','座號','姓名','分數','作答歷時(秒)','作答明細']);
+        sheet.appendRow(['測驗時間', '任務名稱', '座號', '姓名', '分數', '作答歷時(秒)', '作答明細']);
       }
     }
   });
-  try { CacheService.getScriptCache().remove('BankData_V2'); } catch(e) {}
-  return "✅ 資料庫初始化完成！請至 Config 分頁設定您的 Gemini API Key。";
+
+  try { CacheService.getScriptCache().remove('BankData_V3'); } catch (e) {}
+  return "✅ 資料庫初始化完成（v5.0）！Bank 試算表已新增「科目」欄位。";
 }
 
 function verifyAdmin(pwd) {
   const configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
   if (!configSheet) return false;
   const data = configSheet.getDataRange().getValues();
-  for(let i = 1; i < data.length; i++) {
-    if(data[i][0] === 'AdminPassword' && data[i][1].toString() === pwd.toString()) return true;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === 'AdminPassword' && data[i][1].toString() === pwd.toString()) return true;
   }
   return false;
 }
 
-function getQuizSettings() {
+function getConfig() {
   const configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
-  if (!configSheet) return { quizCount: 10 };
-  let quizCount = 10;
-  configSheet.getDataRange().getValues().forEach(row => {
-    if(row[0] === 'QuizCount') quizCount = parseInt(row[1], 10) || 10;
-  });
-  return { quizCount };
+  if (!configSheet) return {};
+  const result = {};
+  configSheet.getDataRange().getValues().forEach(row => { if (row[0]) result[row[0]] = row[1]; });
+  return result;
+}
+
+function getQuizSettings() {
+  const cfg = getConfig();
+  return { quizCount: parseInt(cfg.QuizCount, 10) || 10 };
 }
 
 function updateQuizSettings(newCount) {
@@ -114,59 +122,325 @@ function updateQuizSettings(newCount) {
   if (isNaN(count) || count < 1) throw new Error("請輸入有效的數字");
   const data = configSheet.getDataRange().getValues();
   let found = false;
-  for(let i = 1; i < data.length; i++) {
-    if(data[i][0] === 'QuizCount') { configSheet.getRange(i+1,2).setValue(count); found = true; break; }
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === 'QuizCount') { configSheet.getRange(i + 1, 2).setValue(count); found = true; break; }
   }
   if (!found) configSheet.appendRow(['QuizCount', count]);
   return "✅ 題數已更新為 " + count + " 題！";
 }
 
+
 // ==========================================
-// 2. 任務與學生管理
+// 2. 任務與學生管理（新增科目欄）
 // ==========================================
-function uploadTaskData(taskName, grade, studentData, uniqueNodes) {
+function uploadTaskData(taskName, grade, subject, studentData, uniqueNodes) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const subjectLabel = subject || '數學';
   const historySheet = ss.getSheetByName('History');
   if (historySheet) {
-    historySheet.appendRow([new Date(), "'" + String(taskName), grade, studentData.length, uniqueNodes.join(', ')]);
+    historySheet.appendRow([
+      new Date(), "'" + String(taskName), grade, subjectLabel,
+      studentData.length, uniqueNodes.join(', ')
+    ]);
   }
   let taskSheet = ss.getSheetByName(taskName);
-  if(taskSheet) taskSheet.clear(); else taskSheet = ss.insertSheet(taskName);
-  taskSheet.appendRow(['座號','姓名','答對率','知識節點(弱項)']);
+  if (taskSheet) taskSheet.clear(); else taskSheet = ss.insertSheet(taskName);
+  taskSheet.appendRow(['座號', '姓名', '答對率', '知識節點(弱項)', '科目']);
   const rows = studentData.map(s => {
     let seat = String(s.seatNo || '').trim(), name = String(s.name || '').trim();
     const match = seat.match(/(\d+)\s*[號]?\s*([A-Za-z\u4e00-\u9fa5]+)$/);
     if (match) { seat = match[1]; name = match[2]; }
-    return [seat, name, s.accuracy, s.weakNodes];
+    return [seat, name, s.accuracy, s.weakNodes, subjectLabel];
   });
-  taskSheet.getRange(2, 1, rows.length, 4).setValues(rows);
+  taskSheet.getRange(2, 1, rows.length, 5).setValues(rows);
   return true;
 }
 
 function getTasks() {
   const historySheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('History');
-  if(!historySheet) return [];
+  if (!historySheet) return [];
   const data = historySheet.getDataRange().getValues();
-  return data.slice(1).filter(r => r[1]).map(r => String(r[1])).reverse();
+  // 回傳包含科目資訊的物件
+  return data.slice(1).filter(r => r[1]).map(r => ({
+    name:    String(r[1]).replace(/'/g, ''),
+    grade:   String(r[2] || ''),
+    subject: String(r[3] || '數學'),
+  })).reverse();
 }
 
 function getStudents(taskName) {
   const taskSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(taskName);
-  if(!taskSheet) return [];
+  if (!taskSheet) return [];
   return taskSheet.getDataRange().getValues().slice(1).map(r => ({
-    seatNo: String(r[0] || ''), name: String(r[1] || ''), weakNode: String(r[3] || '')
+    seatNo:  String(r[0] || ''),
+    name:    String(r[1] || ''),
+    weakNode: String(r[3] || ''),
+    subject: String(r[4] || '數學'),
   }));
 }
 
+
 // ==========================================
-// 3. 派題引擎
+// 3. PDF 工具函數
+// ==========================================
+
+/**
+ * 掃描資料夾：回傳資料夾內所有 PDF 的清單（供前端預覽用）
+ * @param {string} folderId - Google Drive 資料夾 ID
+ * @returns {{ count: number, files: [{name, id}] }}
+ */
+function scanFolder(folderId) {
+  if (!folderId || folderId.trim() === '' || folderId.includes('請貼上')) {
+    throw new Error('請先填入有效的資料夾 ID');
+  }
+  try {
+    const folder = DriveApp.getFolderById(folderId);
+    const iter   = folder.getFilesByMimeType('application/pdf');
+    const files  = [];
+    while (iter.hasNext()) {
+      const f = iter.next();
+      files.push({ id: f.getId(), name: f.getName() });
+    }
+    return { folderName: folder.getName(), count: files.length, files: files };
+  } catch (err) {
+    throw new Error('無法讀取資料夾：' + err.message + '\n請確認：① 資料夾 ID 正確 ② 已將資料夾共用給此 Google 帳號');
+  }
+}
+
+/**
+ * 從單一 PDF 讀取文字（使用 Drive OCR）
+ * @param {string} fileId
+ * @returns {string} 最多 6000 字的純文字
+ */
+function extractPdfText(fileId) {
+  try {
+    const resource = {
+      title: '_temp_ocr_' + Date.now(),
+      mimeType: 'application/vnd.google-apps.document'
+    };
+    const tempDoc = Drive.Files.copy(resource, fileId, { ocr: true, ocrLanguage: 'zh-TW' });
+    const docText = DocumentApp.openById(tempDoc.id).getBody().getText();
+    DriveApp.getFileById(tempDoc.id).setTrashed(true);
+    // 單檔限 6000 字，多檔合併後統一限 10000 字
+    return docText.length > 6000 ? docText.substring(0, 6000) + '\n...(略)' : docText;
+  } catch (err) {
+    throw new Error('PDF 讀取失敗（' + err.message + '）。請確認已開啟 Drive API 進階服務。');
+  }
+}
+
+/**
+ * 【主要新功能】讀取資料夾內所有 PDF，合併文字後交給 Gemini 出題
+ * @param {string} folderId   - Google Drive 資料夾 ID（老師一次設定）
+ * @param {string[]} nodesArray
+ * @param {string} grade
+ * @param {string} subject
+ * @param {number} batchIndex
+ */
+function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchIndex) {
+  if (!folderId || folderId.trim() === '') throw new Error('請先在系統設定填入 Google Drive 資料夾 ID');
+
+  // ── 第一批才讀 PDF（後續批次快取重用，節省時間）──
+  const cache    = CacheService.getScriptCache();
+  const PDF_KEY  = 'PdfText_' + folderId;
+  let   pdfText  = cache.get(PDF_KEY);
+
+  if (!pdfText) {
+    // 掃描資料夾，讀取全部 PDF
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(folderId);
+    } catch (err) {
+      throw new Error('無法開啟資料夾（' + err.message + '）\n請確認資料夾 ID 正確且已共用。');
+    }
+
+    const iter  = folder.getFilesByMimeType('application/pdf');
+    const texts = [];
+
+    while (iter.hasNext()) {
+      const f = iter.next();
+      try {
+        const txt = extractPdfText(f.getId());
+        if (txt && txt.trim().length > 0) {
+          texts.push('【' + f.getName() + '】\n' + txt);
+          Logger.log('已讀取：' + f.getName() + '（' + txt.length + ' 字）');
+        }
+      } catch (readErr) {
+        // 單一 PDF 讀取失敗時記錄但不中斷
+        Logger.log('跳過：' + f.getName() + ' → ' + readErr.message);
+        texts.push('【' + f.getName() + '】（讀取失敗，略過）');
+      }
+    }
+
+    if (texts.length === 0) throw new Error('資料夾內沒有可讀取的 PDF，請確認檔案格式正確。');
+
+    // 合併，限制 10000 字避免超過 Gemini Token 上限
+    pdfText = texts.join('\n\n');
+    if (pdfText.length > 10000) {
+      pdfText = pdfText.substring(0, 10000) + '\n\n...(內容過長，已截斷)';
+    }
+
+    // 快取 30 分鐘，同一次出題任務多批次共用
+    try { cache.put(PDF_KEY, pdfText, 1800); } catch (e) {}
+  }
+
+  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, pdfText);
+}
+
+
+// ==========================================
+// 4. 出題 Prompt 工廠
+// 依科目回傳對應的命題指令
+// ==========================================
+function buildPrompt(subject, grade, batchNodes, pdfText) {
+  const nodeList = batchNodes.map((n, i) => `${i + 1}. 「${n}」`).join('\n');
+  const pdfSection = pdfText
+    ? `\n\n【參考教材內容（請依據此內容出題，不可超出範圍）】\n---\n${pdfText}\n---\n`
+    : '';
+
+  if (subject === '國語') {
+    return `你是台灣資深國小國語科命題專家。
+請為「${grade}」學生，針對以下 ${batchNodes.length} 個知識節點，各設計 6 道題：${pdfSection}
+${nodeList}
+
+【國語科命題規範】
+題型分配（每個節點）：
+- 第1-2題：字詞辨識單選題（4選1），考字形、字音、字義辨別
+- 第3-4題：填充題，填入正確詞語、標點或語詞搭配
+- 第5題：句子改寫填充題（給範例句型，學生仿造填空）
+- 第6題：閱讀理解單選題（4選1）
+
+難度分配：第1-2題 easy，第3-5題 medium，第6題 hard
+注意事項：
+- 選擇題的干擾選項要合理，不能明顯錯誤
+- 填充題答案必須是明確的詞語，避免開放性答案
+- 若有提供教材內容，題目必須有教材依據
+- answer 欄位：選擇題填完整選項文字，填充題填正確詞語
+
+只回傳 JSON 陣列，不含任何說明：
+[{"node":"節點","text":"題目文字","type":"single","options":["選項A","選項B","選項C","選項D"],"answer":"選項A","difficulty":"easy"}]`;
+  }
+
+  // 預設：數學科
+  return `你是台灣資深國小數學命題專家。
+請為「${grade}」學生，針對以下 ${batchNodes.length} 個知識節點，各設計 6 道題：${pdfSection}
+${nodeList}
+
+【數學科命題規範】
+- 第1-3題：單選題（type:"single"），4個選項，選項不含雙引號
+- 第4-6題：填充題（type:"fill"），options為[]
+- 難度：第1題 easy，第2-4題 medium，第5-6題 hard
+- 情境多樣：純計算、生活情境、錯誤辨析各至少出現一次
+- answer 必須與 options 某一項完全相同（選擇題），或為純數字/分數（填充題）
+${pdfText ? '- 題目必須有教材依據，數字與情境取自教材' : ''}
+
+只回傳 JSON 陣列，不含任何說明：
+[{"node":"節點","text":"題目","type":"single","options":["A","B","C","D"],"answer":"A","difficulty":"easy"}]`;
+}
+
+
+// ==========================================
+// 5. 批次出題引擎（AI 自由發揮版）
+// ==========================================
+function generateBatch(nodesArray, grade, subject, batchIndex) {
+  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, null);
+}
+
+/**
+ * 從 PDF 教材內容出題
+ */
+function generateBatchFromPdf(fileId, nodesArray, grade, subject, batchIndex) {
+  if (!fileId || fileId.trim() === '') throw new Error('請提供 PDF 檔案 ID');
+  const pdfText = extractPdfText(fileId);
+  if (!pdfText || pdfText.trim().length < 50) throw new Error('PDF 內容讀取失敗或內容過少，請確認檔案可讀取。');
+  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, pdfText);
+}
+
+/**
+ * 核心出題邏輯（AI自由 / PDF 共用）
+ */
+function _doGenerateBatch(nodesArray, grade, subject, batchIndex, pdfText) {
+  const cfg = getConfig();
+  const apiKey = String(cfg.GeminiAPIKey || '');
+  if (!apiKey || apiKey.includes('請在此')) throw new Error("請先在 Config 試算表設定 Gemini API Key！");
+
+  const validNodes = nodesArray.filter(n => n && n.trim() !== '');
+  const BATCH_SIZE = 5;
+  const batches = [];
+  for (let i = 0; i < validNodes.length; i += BATCH_SIZE) batches.push(validNodes.slice(i, i + BATCH_SIZE));
+  const totalBatches = batches.length;
+
+  if (batchIndex >= totalBatches) {
+    _clearAllCaches();
+    return { done: true, current: totalBatches, total: totalBatches, message: `✅ 全部完成！共 ${totalBatches} 批次。` };
+  }
+
+  const batchNodes = batches[batchIndex];
+  const prompt = buildPrompt(subject, grade, batchNodes, pdfText);
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const fetchOpts = {
+    method: "post", contentType: "application/json",
+    payload: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.85 }
+    }),
+    muteHttpExceptions: true
+  };
+
+  let result = null;
+  for (let retry = 0; retry < 3; retry++) {
+    const resp = UrlFetchApp.fetch(url, fetchOpts);
+    result = JSON.parse(resp.getContentText());
+    if (result.error) {
+      if (result.error.message.toLowerCase().includes("quota") || result.error.message.includes("429")) {
+        Utilities.sleep(20000);
+      } else {
+        throw new Error("Gemini API 錯誤: " + result.error.message);
+      }
+    } else break;
+  }
+  if (result && result.error) throw new Error("API 持續失敗，請等待 1 分鐘後重試。");
+
+  const rawText = result.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
+  const questions = JSON.parse(rawText);
+
+  const bankSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  const lastRow = bankSheet.getLastRow() || 1;
+  const newRows = questions.map((q, idx) => [
+    `AI-${subject}-${Date.now().toString().slice(-6)}-${batchIndex}-${idx}`,
+    q.node, q.text, q.type,
+    JSON.stringify(q.options || []),
+    normalizeAnswer(q.answer),
+    q.difficulty, grade,
+    subject   // ← 第 9 欄：科目
+  ]);
+
+  if (newRows.length > 0) {
+    bankSheet.getRange(lastRow + 1, 1, newRows.length, 9).setValues(newRows);
+    bankSheet.getRange(lastRow + 1, 6, newRows.length, 1).setNumberFormat('@STRING@');
+  }
+
+  const isLast = (batchIndex + 1 >= totalBatches);
+  if (isLast) _clearAllCaches();
+
+  return {
+    done: isLast,
+    current: batchIndex + 1,
+    total: totalBatches,
+    addedThisBatch: newRows.length,
+    nodes: batchNodes,
+    message: `[${subject}] 第 ${batchIndex + 1}/${totalBatches} 批完成（${batchNodes.join('、')}）— 新增 ${newRows.length} 題${pdfText ? '（PDF出題）' : ''}`
+  };
+}
+
+
+// ==========================================
+// 6. 派題引擎（新增科目篩選）
 // ==========================================
 function normalizeAnswer(str) {
   if (str === null || str === undefined) return '';
   if (str instanceof Date) return '';
-  if (typeof str === 'number') {
-    return String(Number.isInteger(str) ? str : str).trim().toLowerCase();
-  }
+  if (typeof str === 'number') return String(Number.isInteger(str) ? str : str).trim().toLowerCase();
   return String(str).trim()
     .replace(/\s+/g, '')
     .replace(/[\uff10-\uff19]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
@@ -176,20 +450,23 @@ function normalizeAnswer(str) {
 
 function generateQuiz(weakNode, taskName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let quizCount = 10;
-  const configData = (ss.getSheetByName('Config') || {getDataRange:()=>({getValues:()=>[]})}).getDataRange().getValues();
-  configData.forEach(r => { if(r[0]==='QuizCount') quizCount = parseInt(r[1],10)||10; });
+  const cfg = getConfig();
+  const quizCount = parseInt(cfg.QuizCount, 10) || 10;
 
-  let targetGrade = '';
+  // 取得任務的年級與科目
+  let targetGrade = '', targetSubject = '數學';
   const historySheet = ss.getSheetByName('History');
   if (historySheet && taskName) {
     historySheet.getDataRange().getValues().slice(1).forEach(r => {
-      if (String(r[1]).replace(/'/g,'') === String(taskName)) targetGrade = String(r[2]).trim();
+      if (String(r[1]).replace(/'/g, '') === String(taskName)) {
+        targetGrade   = String(r[2] || '').trim();
+        targetSubject = String(r[3] || '數學').trim();
+      }
     });
   }
 
   const cache = CacheService.getScriptCache();
-  const CACHE_KEY = 'BankData_V2';
+  const CACHE_KEY = 'BankData_V3';
   let allQuestions = [];
   const cachedData = cache.get(CACHE_KEY);
 
@@ -199,182 +476,186 @@ function generateQuiz(weakNode, taskName) {
     const bankSheet = ss.getSheetByName('Bank');
     if (!bankSheet || bankSheet.getLastRow() <= 1) return [];
     const lastRow = bankSheet.getLastRow();
-    bankSheet.getRange(2, 6, lastRow-1, 1).setNumberFormat('@STRING@');
-    const data        = bankSheet.getRange(2, 1, lastRow-1, 8).getValues();
-    const displayData = bankSheet.getRange(2, 1, lastRow-1, 8).getDisplayValues();
+    bankSheet.getRange(2, 6, lastRow - 1, 1).setNumberFormat('@STRING@');
+    const data        = bankSheet.getRange(2, 1, lastRow - 1, 9).getValues();
+    const displayData = bankSheet.getRange(2, 1, lastRow - 1, 9).getDisplayValues();
+
     data.forEach((row, i) => {
       if (!row[0] && !row[2]) return;
       let options = [];
       const rawOpts = row[4] ? String(row[4]).trim() : '';
       if (rawOpts) {
-        if (rawOpts.startsWith('[')) { try { options = JSON.parse(rawOpts); } catch(e) {} }
-        else { options = rawOpts.split(',').map(o=>o.trim()).filter(o=>o); }
+        if (rawOpts.startsWith('[')) { try { options = JSON.parse(rawOpts); } catch (e) {} }
+        else { options = rawOpts.split(',').map(o => o.trim()).filter(o => o); }
       }
-      const rawAnswer = (displayData[i] && displayData[i][5]) ? displayData[i][5] : String(row[5]||'');
+      const rawAnswer = (displayData[i] && displayData[i][5]) ? displayData[i][5] : String(row[5] || '');
       allQuestions.push({
-        id: row[0]||`Q${i+2}`, node: row[1]?String(row[1]).trim():'',
-        text: row[2], type: row[3], options,
-        answer: normalizeAnswer(rawAnswer),
+        id:            row[0] || `Q${i + 2}`,
+        node:          row[1] ? String(row[1]).trim() : '',
+        text:          row[2],
+        type:          row[3],
+        options,
+        answer:        normalizeAnswer(rawAnswer),
         displayAnswer: String(rawAnswer).trim(),
-        difficulty: String(row[6]||'medium').trim(),
-        grade: String(row[7]||'').trim()
+        difficulty:    String(row[6] || 'medium').trim(),
+        grade:         String(row[7] || '').trim(),
+        subject:       String(row[8] || '數學').trim(),   // ← 第 9 欄
       });
     });
-    try { cache.put(CACHE_KEY, JSON.stringify(allQuestions), 3600); } catch(e) {}
+    try { cache.put(CACHE_KEY, JSON.stringify(allQuestions), 3600); } catch (e) {}
   }
 
   const shuffle = arr => {
-    for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
     return arr;
   };
 
+  // 篩選：科目 + 年級 + 弱點節點
   let targets = [], fallbacks = [];
-  const safeNode = String(weakNode||'').trim();
+  const safeNode = String(weakNode || '').trim();
   allQuestions.forEach(q => {
+    // 科目不符合就跳過
+    if (q.subject && q.subject !== targetSubject) return;
+    // 年級不符合就跳過
     if (targetGrade && q.grade && q.grade !== targetGrade) return;
-    if(q.node&&safeNode&&(q.node.includes(safeNode)||safeNode.includes(q.node))) targets.push(q);
-    else if(!targetGrade||!q.grade||q.grade===targetGrade) fallbacks.push(q);
+
+    if (q.node && safeNode && (q.node.includes(safeNode) || safeNode.includes(q.node))) {
+      targets.push(q);
+    } else if (!targetGrade || !q.grade || q.grade === targetGrade) {
+      fallbacks.push(q);
+    }
   });
 
   const pickByDiff = (arr, n) => {
-    const e=shuffle(arr.filter(q=>q.difficulty==='easy'));
-    const m=shuffle(arr.filter(q=>q.difficulty==='medium'));
-    const h=shuffle(arr.filter(q=>q.difficulty==='hard'));
-    const ec=Math.round(n*0.3),hc=Math.round(n*0.2),mc=n-ec-hc;
-    let res=[...e.slice(0,ec),...m.slice(0,mc),...h.slice(0,hc)];
-    if(res.length<n){const rest=shuffle([...e.slice(ec),...m.slice(mc),...h.slice(hc)]);res=res.concat(rest.slice(0,n-res.length));}
+    const e = shuffle(arr.filter(q => q.difficulty === 'easy'));
+    const m = shuffle(arr.filter(q => q.difficulty === 'medium'));
+    const h = shuffle(arr.filter(q => q.difficulty === 'hard'));
+    const ec = Math.round(n * 0.3), hc = Math.round(n * 0.2), mc = n - ec - hc;
+    let res = [...e.slice(0, ec), ...m.slice(0, mc), ...h.slice(0, hc)];
+    if (res.length < n) {
+      const rest = shuffle([...e.slice(ec), ...m.slice(mc), ...h.slice(hc)]);
+      res = res.concat(rest.slice(0, n - res.length));
+    }
     return res;
   };
 
   shuffle(targets);
   let final = pickByDiff(targets, Math.min(quizCount, targets.length));
-  if(final.length<quizCount){shuffle(fallbacks);final=final.concat(pickByDiff(fallbacks,Math.min(quizCount-final.length,fallbacks.length)));}
-
-  final = final.map(q => q.type==='single'&&q.options.length>1 ? {...q,options:shuffle([...q.options])} : q);
+  if (final.length < quizCount) {
+    shuffle(fallbacks);
+    final = final.concat(pickByDiff(fallbacks, Math.min(quizCount - final.length, fallbacks.length)));
+  }
+  final = final.map(q => q.type === 'single' && q.options.length > 1 ? { ...q, options: shuffle([...q.options]) } : q);
   return shuffle(final);
 }
 
 function submitQuizResult(data) {
   const resultSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Results');
   if (resultSheet) {
-    resultSheet.appendRow([new Date(), data.taskName, data.seatNo, data.name, data.score, data.timeSpent, JSON.stringify(data.details)]);
+    resultSheet.appendRow([
+      new Date(), data.taskName, data.seatNo, data.name,
+      data.score, data.timeSpent, JSON.stringify(data.details)
+    ]);
   }
   return true;
 }
 
+
 // ==========================================
-// 4. 🚀 批次出題引擎
+// 7. 教學講義生成（新增科目支援）
 // ==========================================
-function generateBatch(nodesArray, grade, batchIndex) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const configData = ss.getSheetByName('Config').getDataRange().getValues();
-  let apiKey = '';
-  configData.forEach(r => { if(r[0]==='GeminiAPIKey') apiKey = String(r[1]); });
-  if(!apiKey || apiKey.includes('請在此')) throw new Error("請先設定 Gemini API Key！");
+function generateTeachingWorksheet(topNodes, grade, subject) {
+  const cfg = getConfig();
+  const apiKey = String(cfg.GeminiAPIKey || '');
+  if (!apiKey || apiKey.includes('請在此')) throw new Error("請先設定 Gemini API Key！");
 
-  const validNodes = nodesArray.filter(n => n && n.trim() !== '');
-  const BATCH_SIZE = 5;
-  const batches = [];
-  for(let i=0;i<validNodes.length;i+=BATCH_SIZE) batches.push(validNodes.slice(i,i+BATCH_SIZE));
+  const subj = subject || '數學';
+  const nodeList = topNodes.map((n, i) => `${i + 1}. 「${n}」`).join('\n');
 
-  const totalBatches = batches.length;
-
-  if (batchIndex >= totalBatches) {
-    try { CacheService.getScriptCache().remove('BankData_V2'); } catch(e) {}
-    try { CacheService.getScriptCache().remove('BankData_V1'); } catch(e) {}
-    return { done: true, current: totalBatches, total: totalBatches, message: `✅ 全部完成！共 ${totalBatches} 批次。` };
-  }
-
-  const batchNodes = batches[batchIndex];
-  const nodeList = batchNodes.map((n,i) => `${i+1}. 「${n}」`).join('\n');
-
-  const prompt = `你是台灣資深國小數學命題專家。
-請為「${grade}」學生，針對以下 ${batchNodes.length} 個知識節點，各設計 6 道題：
+  let prompt = '';
+  if (subj === '國語') {
+    prompt = `你是台灣國小國語科教師，擅長設計補救教學練習。
+請針對「${grade}」學生，為以下知識節點設計「教師教學用講義」：
 
 ${nodeList}
 
 規範：
-- 第1-3題：單選題（type:"single"），4個選項，選項不含雙引號
-- 第4-6題：填充題（type:"fill"），options為[]
-- 難度：第1題 easy，第2-4題 medium，第5-6題 hard  
-- 情境多樣：純計算、生活情境、錯誤辨析各至少出現一次
-- answer 必須與 options 某一項完全相同（選擇題），或為純數字/分數（填充題）
+- 每個節點設計 5 題，題型為填充題（type: "fill"）或簡單選擇題（type: "single"）
+- 難度全部 easy（最基礎，只考核心概念）
+- step：寫出學習步驟（如「先找出生字的部首」）
+- hint：一句教學提示（如「注意左右結構的寫法！」）
+- answer：選擇題填完整選項，填充題填正確詞語
 
-只回傳 JSON 陣列，不含任何說明文字：
-[{"node":"節點","text":"題目","type":"single","options":["A","B","C","D"],"answer":"A","difficulty":"easy"}]`;
+只回傳 JSON 陣列：
+[{"node":"節點","step":"步驟","text":"題目","type":"fill","answer":"答案","hint":"提示"}]`;
+  } else {
+    prompt = `你是台灣國小數學科教師，擅長設計補救教學練習。
+請針對「${grade}」學生，為以下知識節點設計「教師教學用講義」：
+
+${nodeList}
+
+規範：
+- 每個節點設計 5 題，全部為填充計算題（type: "fill"）
+- 難度全部 easy（最基礎的直接計算）
+- step：引導步驟（如「先通分 → 再相加」）
+- hint：一句教學提示
+- answer：最終數字或分數答案
+
+只回傳 JSON 陣列：
+[{"node":"節點","step":"步驟","text":"題目","type":"fill","answer":"答案","hint":"提示"}]`;
+  }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-  const fetchOpts = {
+  const opts = {
     method: "post", contentType: "application/json",
-    payload: JSON.stringify({ contents:[{parts:[{text:prompt}]}], generationConfig:{responseMimeType:"application/json",temperature:0.85} }),
+    payload: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.5 }
+    }),
     muteHttpExceptions: true
   };
 
   let result = null;
-  for(let retry=0; retry<3; retry++) {
-    const resp = UrlFetchApp.fetch(url, fetchOpts);
+  for (let retry = 0; retry < 3; retry++) {
+    const resp = UrlFetchApp.fetch(url, opts);
     result = JSON.parse(resp.getContentText());
-    if(result.error) {
-      if(result.error.message.toLowerCase().includes("quota")||result.error.message.includes("429")) { Utilities.sleep(20000); }
+    if (result.error) {
+      if (result.error.message.toLowerCase().includes("quota")) { Utilities.sleep(15000); }
       else throw new Error("API 錯誤: " + result.error.message);
     } else break;
   }
-  if(result && result.error) throw new Error("API 持續失敗，請等待 1 分鐘後重試。");
+  if (result && result.error) throw new Error("API 持續失敗，請稍後再試。");
 
-  let text = result.candidates[0].content.parts[0].text.replace(/```json/g,'').replace(/```/g,'').trim();
-  const questions = JSON.parse(text);
-  const bankSheet = ss.getSheetByName('Bank');
-  const lastRow = bankSheet.getLastRow() || 1;
-  const newRows = questions.map((q,idx) => [
-    `AI-${Date.now().toString().slice(-6)}-${batchIndex}-${idx}`,
-    q.node, q.text, q.type,
-    JSON.stringify(q.options||[]),
-    normalizeAnswer(q.answer),
-    q.difficulty, grade
-  ]);
-  if(newRows.length > 0) {
-    const writeRange = bankSheet.getRange(lastRow+1, 1, newRows.length, 8);
-    writeRange.setValues(newRows);
-    bankSheet.getRange(lastRow+1, 6, newRows.length, 1).setNumberFormat('@STRING@');
-  }
-
-  const isLast = (batchIndex+1 >= totalBatches);
-  if(isLast) {
-    try { CacheService.getScriptCache().remove('BankData_V2'); } catch(e) {}
-    try { CacheService.getScriptCache().remove('BankData_V1'); } catch(e) {}
-  }
-
-  return {
-    done: isLast,
-    current: batchIndex+1,
-    total: totalBatches,
-    addedThisBatch: newRows.length,
-    nodes: batchNodes,
-    message: `第 ${batchIndex+1} / ${totalBatches} 批完成（${batchNodes.join('、')}）— 新增 ${newRows.length} 題`
-  };
+  const rawText = result.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
+  return JSON.parse(rawText);
 }
 
+
 // ==========================================
-// 5. 清除題庫快取
+// 8. 快取管理
 // ==========================================
+function _clearAllCaches() {
+  ['BankData_V3', 'BankData_V2', 'BankData_V1'].forEach(key => {
+    try { CacheService.getScriptCache().remove(key); } catch (e) {}
+  });
+}
+
 function clearBankCache() {
-  try { CacheService.getScriptCache().remove('BankData_V2'); } catch(e) {}
-  try { CacheService.getScriptCache().remove('BankData_V1'); } catch(e) {}
+  _clearAllCaches();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const bankSheet = ss.getSheetByName('Bank');
   if (bankSheet && bankSheet.getLastRow() > 1) {
-    bankSheet.getRange(2, 6, bankSheet.getLastRow()-1, 1).setNumberFormat('@STRING@');
+    bankSheet.getRange(2, 6, bankSheet.getLastRow() - 1, 1).setNumberFormat('@STRING@');
   }
-  return "✅ 快取已清除，正解欄格式已修正！下次學生進入將重新讀取最新題庫。";
+  return "✅ 快取已清除，正解欄格式已修正！";
 }
 
-function testAIGeneration() {
-  UrlFetchApp.fetch("https://www.google.com");
-  Logger.log("權限檢測通過！");
-}
 
 // ==========================================
-// 7. 教師儀表板：讀取任務作答記錄
+// 9. 教師儀表板：成績分析
 // ==========================================
 function getTaskResults(taskName) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -386,40 +667,34 @@ function getTaskResults(taskName) {
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
-    const rowTask = String(row[1] || '').replace(/'/g, '').trim();
+    const rowTask   = String(row[1] || '').replace(/'/g, '').trim();
     const cleanTask = String(taskName || '').replace(/'/g, '').trim();
     if (rowTask !== cleanTask) continue;
-
     let details = [];
-    try { details = JSON.parse(row[6] || '[]'); } catch(e) {}
-
+    try { details = JSON.parse(row[6] || '[]'); } catch (e) {}
     results.push({
-      submittedAt : row[0] ? new Date(row[0]).toLocaleString('zh-TW') : '',
-      taskName    : rowTask,
-      seatNo      : String(row[2] || ''),
-      name        : String(row[3] || ''),
-      score       : Number(row[4] || 0),
-      timeSpent   : Number(row[5] || 0),
-      details     : details
+      submittedAt: row[0] ? new Date(row[0]).toLocaleString('zh-TW') : '',
+      taskName:    rowTask,
+      seatNo:      String(row[2] || ''),
+      name:        String(row[3] || ''),
+      score:       Number(row[4] || 0),
+      timeSpent:   Number(row[5] || 0),
+      details:     details
     });
   }
 
-  const seen = {};
-  const deduped = [];
+  const seen = {}, deduped = [];
   for (let i = results.length - 1; i >= 0; i--) {
     const key = results[i].seatNo + '_' + results[i].name;
     if (!seen[key]) { seen[key] = true; deduped.unshift(results[i]); }
   }
-
   return deduped.sort((a, b) => Number(a.seatNo) - Number(b.seatNo));
 }
 
 function analyzeClassWeakNodes(taskName) {
   const results = getTaskResults(taskName);
   if (!results.length) return [];
-
   const nodeMap = {};
-
   results.forEach(r => {
     (r.details || []).forEach(d => {
       if (!d.isCorrect && d.node) {
@@ -429,95 +704,29 @@ function analyzeClassWeakNodes(taskName) {
       }
     });
   });
-
   const totalStudents = results.length;
-  const analysis = Object.entries(nodeMap).map(([node, students]) => ({
+  return Object.entries(nodeMap).map(([node, students]) => ({
     node,
-    wrongCount   : students.size,
-    studentCount : totalStudents,
-    wrongRate    : Math.round((students.size / totalStudents) * 100),
-    students     : Array.from(students)
-  }));
-
-  return analysis.sort((a, b) => b.wrongCount - a.wrongCount);
+    wrongCount:   students.size,
+    studentCount: totalStudents,
+    wrongRate:    Math.round((students.size / totalStudents) * 100),
+    students:     Array.from(students)
+  })).sort((a, b) => b.wrongCount - a.wrongCount);
 }
 
-function generateTeachingWorksheet(topNodes, grade) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const configData = ss.getSheetByName('Config').getDataRange().getValues();
-  let apiKey = '';
-  configData.forEach(r => { if(r[0]==='GeminiAPIKey') apiKey = String(r[1]); });
-  if(!apiKey || apiKey.includes('請在此')) throw new Error("請先設定 Gemini API Key！");
-
-  const nodeList = topNodes.map((n, i) => `${i+1}. 「${n}」`).join('\n');
-
-  const prompt = `你是台灣國小數學科教師，擅長設計簡單易懂的補救教學練習。
-請針對「${grade}」學生，為以下知識節點設計一份「教師教學用講義」：
-
-${nodeList}
-
-## 講義設計規範
-- 每個節點設計 5 題，全部為「填充計算題」（type: "fill"）
-- 難度全部設為 easy（最基礎的直接計算，不要應用題情境）
-- 題目要有引導步驟（例如：先通分 → 再計算）
-- 讓學生能看到計算過程，而不只是填答案
-- answer 只寫最終數字答案（如 "3/4" 或 "2"）
-- hint 欄位寫一句教學提示（如「先找公分母！」）
-
-只回傳 JSON 陣列，不含說明：
-[
-  {
-    "node": "節點名稱",
-    "step": "引導步驟說明（如：第一步通分，第二步相加）",
-    "text": "題目（最簡單的直接計算）",
-    "type": "fill",
-    "answer": "答案",
-    "hint": "教學提示一句話"
-  }
-]`;
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-  const payload = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.5 }
-  };
-  const opts = { method:"post", contentType:"application/json", payload:JSON.stringify(payload), muteHttpExceptions:true };
-
-  let result = null;
-  for(let retry=0; retry<3; retry++) {
-    const resp = UrlFetchApp.fetch(url, opts);
-    result = JSON.parse(resp.getContentText());
-    if(result.error) {
-      if(result.error.message.toLowerCase().includes("quota")) { Utilities.sleep(15000); }
-      else throw new Error("API 錯誤: " + result.error.message);
-    } else break;
-  }
-  if(result && result.error) throw new Error("API 持續失敗，請稍後再試。");
-
-  let text = result.candidates[0].content.parts[0].text.replace(/```json/g,'').replace(/```/g,'').trim();
-  return JSON.parse(text);
-}
-
-// ==========================================
-// 8. 全班各題錯誤率統計
-// ==========================================
 function getQuestionErrorRates(taskName) {
   const results = getTaskResults(taskName);
   if (!results.length) return [];
-
   const qMap = {};
-
   results.forEach(r => {
     (r.details || []).forEach(d => {
       const qid = d.id || d.questionText || 'unknown';
       if (!qMap[qid]) {
         qMap[qid] = {
-          questionText : d.questionText || qid,
-          node         : d.node || '',
-          correctAns   : d.displayCorrectAns || d.correctAns || '',
-          total        : 0,
-          wrong        : 0,
-          wrongAnswers : []
+          questionText: d.questionText || qid,
+          node:         d.node || '',
+          correctAns:   d.displayCorrectAns || d.correctAns || '',
+          total: 0, wrong: 0, wrongAnswers: []
         };
       }
       qMap[qid].total++;
@@ -527,8 +736,15 @@ function getQuestionErrorRates(taskName) {
       }
     });
   });
-
   return Object.values(qMap)
     .map(q => ({ ...q, wrongRate: Math.round((q.wrong / q.total) * 100) }))
     .sort((a, b) => b.wrongRate - a.wrongRate);
+}
+
+// ==========================================
+// 10. 測試用：確認 UrlFetchApp 權限
+// ==========================================
+function testAIGeneration() {
+  UrlFetchApp.fetch("https://www.google.com");
+  Logger.log("外部連線權限正常！");
 }
