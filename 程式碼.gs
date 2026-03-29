@@ -1,7 +1,7 @@
 /**
  * ============================================================================
- * 車城國小學力檢測考古題輔助系統 - 後端 API 伺服器 (前後端分離版)
- * v5.5 - 國語科多元化題型支援 + PDF 資料夾權限修復
+ * 車城國小學力檢測考古題輔助系統 - 後端 API 伺服器
+ * v5.6 - 新增 AI+PDF 混合命題模式、修復授權觸發
  * ============================================================================
  */
 
@@ -24,7 +24,7 @@ function doPost(e) {
       case 'clearBankCache':            result = clearBankCache(); break;
       case 'uploadTaskData':            result = uploadTaskData(data.taskName, data.grade, data.subject, data.studentData, data.uniqueNodes); break;
       case 'generateBatch':             result = generateBatch(data.nodesArray, data.grade, data.subject, data.batchIndex); break;
-      case 'generateBatchFromFolder':   result = generateBatchFromFolder(data.folderId, data.nodesArray, data.grade, data.subject, data.batchIndex); break;
+      case 'generateBatchFromFolder':   result = generateBatchFromFolder(data.folderId, data.nodesArray, data.grade, data.subject, data.batchIndex, data.mode); break;
       case 'scanFolder':                result = scanFolder(data.folderId); break;
       case 'generateQuiz':              result = generateQuiz(data.weakNode, data.taskName); break;
       case 'submitQuizResult':          result = submitQuizResult(data.payload); break;
@@ -255,7 +255,7 @@ function extractPdfText(fileId) {
   } catch (err) { throw new Error('PDF 讀取失敗'); }
 }
 
-function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchIndex) {
+function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchIndex, mode) {
   const cleanId = folderId.split('?')[0].trim();
   const cache   = CacheService.getScriptCache();
   const PDF_KEY = 'PdfText_' + cleanId;
@@ -277,12 +277,20 @@ function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchInde
     if (pdfText.length > 10000) pdfText = pdfText.substring(0, 10000) + '\n\n...(截斷)';
     try { cache.put(PDF_KEY, pdfText, 1800); } catch (e) {}
   }
-  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, pdfText);
+  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, pdfText, mode);
 }
 
-function buildPrompt(subject, grade, batchNodes, pdfText) {
+function buildPrompt(subject, grade, batchNodes, pdfText, mode) {
   const nodeList = batchNodes.map((n, i) => `${i + 1}. 「${n}」`).join('\n');
-  const pdfSection = pdfText ? `\n\n【參考教材內容（請依此出題）】\n---\n${pdfText}\n---\n` : '';
+  
+  let pdfSection = '';
+  if (pdfText) {
+    if (mode === 'mixed') {
+      pdfSection = `\n\n【參考教材內容】\n---\n${pdfText}\n---\n📌 請優先參考以上教材內容出題，若教材內容無法涵蓋全部知識節點，請運用你的學科專業知識補充。`;
+    } else if (mode === 'pdf') {
+      pdfSection = `\n\n【參考教材內容】\n---\n${pdfText}\n---\n📌 嚴格注意：所有題目必須且只能從以上教材中出題，絕對不可超出範圍！`;
+    }
+  }
 
   if (subject === '國語') {
     return `你是台灣國小國語科命題專家。請為「${grade}」針對以下 ${batchNodes.length} 個節點各設計 6 道題：${pdfSection}\n${nodeList}
@@ -297,10 +305,10 @@ function buildPrompt(subject, grade, batchNodes, pdfText) {
 }
 
 function generateBatch(nodesArray, grade, subject, batchIndex) {
-  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, null);
+  return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, null, 'ai');
 }
 
-function _doGenerateBatch(nodesArray, grade, subject, batchIndex, pdfText) {
+function _doGenerateBatch(nodesArray, grade, subject, batchIndex, pdfText, mode) {
   const cfg = getConfig();
   const apiKey = String(cfg.GeminiAPIKey || '');
   if (!apiKey || apiKey.includes('請在此')) throw new Error("請先在 Config 試算表設定 Gemini API Key！");
@@ -317,7 +325,7 @@ function _doGenerateBatch(nodesArray, grade, subject, batchIndex, pdfText) {
   }
 
   const batchNodes = batches[batchIndex];
-  const prompt = buildPrompt(subject, grade, batchNodes, pdfText);
+  const prompt = buildPrompt(subject, grade, batchNodes, pdfText, mode);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
   const fetchOpts = {
     method: "post", contentType: "application/json",
@@ -498,10 +506,10 @@ function generateTeachingWorksheet(topNodes, grade, subject) {
 ${nodeList}
 
 規範：
-- 每個節點設計 4~5 題，題型必須「多元化」，包含：改錯字、字音字形選擇、詞語填空、短語替換等符合學生弱點程度的題型。
+- 每個節點設計 4~5 題，題型必須「多元化」，包含：改錯字、字音字形選擇、詞語填空、短語替換等符合學生弱點程度的基礎題型。
 - 難度必須配合補救教學，從最基礎的題目開始引導。
 - step：寫出解題的鷹架引導（例如：「請先圈出句子中讀音奇怪的字」）。
-- hint：給學生的一句小提示。
+- hint：給學生的一句溫馨小提示。
 - answer：正確解答。
 - type：選擇題用 "single"，填空/改錯/簡答用 "fill"。
 
@@ -552,7 +560,14 @@ ${nodeList}
 function _clearAllCaches() { ['BankData_V3'].forEach(k => { try { CacheService.getScriptCache().remove(k); } catch (e) {} }); }
 function clearBankCache() { _clearAllCaches(); return "✅ 快取已清除！"; }
 
+// 🟢 這是最重要的授權觸發函數！
 function testAIGeneration() {
   UrlFetchApp.fetch("https://www.google.com");
-  Logger.log("外部連線權限與 Drive 權限已檢測通過！");
+  DriveApp.getRootFolder(); // 強制觸發 Google Drive 權限審查
+  
+  // 觸發 Document 權限並正確將暫存檔丟入垃圾桶
+  const tempDoc = DocumentApp.create('temp_doc'); 
+  DriveApp.getFileById(tempDoc.getId()).setTrashed(true); 
+  
+  Logger.log("外部連線、Drive 與 Document 權限已檢測通過！");
 }
