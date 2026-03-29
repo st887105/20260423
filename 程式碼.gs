@@ -454,13 +454,26 @@ function generateQuiz(weakNode, taskName) {
   const quizCount = parseInt(cfg.QuizCount, 10) || 10;
 
   // 取得任務的年級與科目
+  // 【防呆】先從任務分頁第5欄讀科目，再從 History 讀年級
   let targetGrade = '', targetSubject = '數學';
+
+  // 方法一：從任務分頁第 5 欄直接讀科目（最可靠，不受試算表版本影響）
+  const taskSheetForSubject = ss.getSheetByName(taskName);
+  if (taskSheetForSubject && taskSheetForSubject.getLastRow() > 1) {
+    try {
+      const subjectVal = String(taskSheetForSubject.getRange(2, 5, 1, 1).getValue() || '').trim();
+      if (subjectVal === '國語' || subjectVal === '數學') targetSubject = subjectVal;
+    } catch(e) {}
+  }
+
+  // 方法二：從 History 讀年級，科目只有是明確文字才採用（防止讀到舊格式的數字）
   const historySheet = ss.getSheetByName('History');
   if (historySheet && taskName) {
     historySheet.getDataRange().getValues().slice(1).forEach(r => {
-      if (String(r[1]).replace(/'/g, '') === String(taskName)) {
-        targetGrade   = String(r[2] || '').trim();
-        targetSubject = String(r[3] || '數學').trim();
+      if (String(r[1]).replace(/'/g, '').trim() === String(taskName).trim()) {
+        targetGrade = String(r[2] || '').trim();
+        const r3 = String(r[3] || '').trim();
+        if (r3 === '國語' || r3 === '數學') targetSubject = r3;
       }
     });
   }
@@ -499,7 +512,7 @@ function generateQuiz(weakNode, taskName) {
         displayAnswer: String(rawAnswer).trim(),
         difficulty:    String(row[6] || 'medium').trim(),
         grade:         String(row[7] || '').trim(),
-        subject:       String(row[8] || '數學').trim(),   // ← 第 9 欄
+        subject:       (row[8] && (String(row[8]).trim() === '國語' || String(row[8]).trim() === '數學')) ? String(row[8]).trim() : '',  // 第 9 欄，空白表示不限科目
       });
     });
     try { cache.put(CACHE_KEY, JSON.stringify(allQuestions), 3600); } catch (e) {}
@@ -553,13 +566,26 @@ function generateQuiz(weakNode, taskName) {
 }
 
 function submitQuizResult(data) {
-  const resultSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Results');
-  if (resultSheet) {
-    resultSheet.appendRow([
-      new Date(), data.taskName, data.seatNo, data.name,
-      data.score, data.timeSpent, JSON.stringify(data.details)
-    ]);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let resultSheet = ss.getSheetByName('Results');
+
+  // 若 Results 分頁不存在，自動建立
+  if (!resultSheet) {
+    resultSheet = ss.insertSheet('Results');
+    resultSheet.appendRow(['測驗時間', '任務名稱', '座號', '姓名', '分數', '作答歷時(秒)', '作答明細']);
   }
+
+  if (!data || !data.taskName) throw new Error('作答資料格式錯誤，缺少 taskName');
+
+  resultSheet.appendRow([
+    new Date(),
+    data.taskName,
+    data.seatNo  || '',
+    data.name    || '',
+    data.score   || 0,
+    data.timeSpent || 0,
+    JSON.stringify(data.details || [])
+  ]);
   return true;
 }
 
