@@ -26,6 +26,8 @@ function doPost(e) {
       case 'verifyAdmin':               result = verifyAdmin(data.pwd); break;
       case 'getQuizSettings':           result = getQuizSettings(); break;
       case 'updateQuizSettings':        result = updateQuizSettings(data.count); break;
+      case 'updateFolderId':            result = updateFolderId(data.folderId); break;
+      case 'getFolderId':               result = getFolderId(); break;
       case 'setupDatabase':             result = setupDatabase(); break;
       case 'clearBankCache':            result = clearBankCache(); break;
       case 'uploadTaskData':            result = uploadTaskData(data.taskName, data.grade, data.subject, data.studentData, data.uniqueNodes); break;
@@ -64,33 +66,78 @@ function doGet(e) {
 // ==========================================
 function setupDatabase() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const log = [];
 
-  ['Config', 'Bank', 'History', 'Results'].forEach(sheetName => {
-    let sheet = ss.getSheetByName(sheetName);
-    if (!sheet) {
-      sheet = ss.insertSheet(sheetName);
-      if (sheetName === 'Config') {
-        sheet.appendRow(['Key', 'Value']);
-        sheet.appendRow(['AdminPassword', '1234']);
-        sheet.appendRow(['GeminiAPIKey', '請在此貼上您的API金鑰']);
-        sheet.appendRow(['QuizCount', '10']);
-        // PDF 資料夾設定：貼上 Google Drive 資料夾 ID（含所有教材 PDF）
-        sheet.appendRow(['PdfFolderId', '（選填）貼上 Google Drive 資料夾 ID，系統將自動讀取資料夾內所有 PDF 出題']);
-      } else if (sheetName === 'Bank') {
-        // v5.0：新增第 9 欄「科目」
-        sheet.appendRow(['ID', '知識節點', '題目', '類型(single/fill)', '選項(JSON陣列)', '正解', '難度', '適用年級', '科目']);
-      } else if (sheetName === 'History') {
-        // 新增科目欄
-        sheet.appendRow(['上傳時間', '任務名稱', '適用年級', '科目', '學生人數', '班級弱點節點']);
-      } else if (sheetName === 'Results') {
-        sheet.appendRow(['測驗時間', '任務名稱', '座號', '姓名', '分數', '作答歷時(秒)', '作答明細']);
-      }
+  // ── Config ──
+  let configSheet = ss.getSheetByName('Config');
+  if (!configSheet) {
+    configSheet = ss.insertSheet('Config');
+    configSheet.appendRow(['Key', 'Value']);
+    configSheet.appendRow(['AdminPassword', '1234']);
+    configSheet.appendRow(['GeminiAPIKey', '請在此貼上您的API金鑰']);
+    configSheet.appendRow(['QuizCount', '10']);
+    configSheet.appendRow(['PdfFolderId', '（選填）貼上 Google Drive 資料夾 ID']);
+    log.push('Config 分頁已建立');
+  } else {
+    // 補齊缺少的 Key
+    const configData = configSheet.getDataRange().getValues();
+    const existKeys = configData.map(r => String(r[0]));
+    if (!existKeys.includes('PdfFolderId')) {
+      configSheet.appendRow(['PdfFolderId', '（選填）貼上 Google Drive 資料夾 ID']);
+      log.push('Config 已補充 PdfFolderId');
     }
-  });
+  }
+
+  // ── Bank ──
+  let bankSheet = ss.getSheetByName('Bank');
+  if (!bankSheet) {
+    bankSheet = ss.insertSheet('Bank');
+    bankSheet.appendRow(['ID', '知識節點', '題目', '類型(single/fill)', '選項(JSON陣列)', '正解', '難度', '適用年級', '科目']);
+    log.push('Bank 分頁已建立（含科目欄）');
+  } else {
+    // 補齊第 9 欄「科目」
+    const header = bankSheet.getRange(1, 1, 1, bankSheet.getLastColumn()).getValues()[0];
+    if (!header.includes('科目')) {
+      bankSheet.getRange(1, header.length + 1).setValue('科目');
+      log.push('Bank 已補充「科目」欄位');
+    } else {
+      log.push('Bank 科目欄已存在 ✅');
+    }
+  }
+
+  // ── History ──
+  let historySheet = ss.getSheetByName('History');
+  if (!historySheet) {
+    historySheet = ss.insertSheet('History');
+    historySheet.appendRow(['上傳時間', '任務名稱', '適用年級', '科目', '學生人數', '班級弱點節點']);
+    log.push('History 分頁已建立（含科目欄）');
+  } else {
+    const header = historySheet.getRange(1, 1, 1, historySheet.getLastColumn()).getValues()[0];
+    if (!header.includes('科目')) {
+      // 在適用年級後插入科目欄（第4欄）
+      historySheet.insertColumnAfter(3);
+      historySheet.getRange(1, 4).setValue('科目');
+      log.push('History 已在第4欄插入「科目」欄位');
+    } else {
+      log.push('History 科目欄已存在 ✅');
+    }
+  }
+
+  // ── Results ──
+  let resultsSheet = ss.getSheetByName('Results');
+  if (!resultsSheet) {
+    resultsSheet = ss.insertSheet('Results');
+    resultsSheet.appendRow(['測驗時間', '任務名稱', '座號', '姓名', '分數', '作答歷時(秒)', '作答明細']);
+    log.push('Results 分頁已建立');
+  } else {
+    log.push('Results 分頁已存在 ✅');
+  }
 
   try { CacheService.getScriptCache().remove('BankData_V3'); } catch (e) {}
-  return "✅ 資料庫初始化完成（v5.0）！Bank 試算表已新增「科目」欄位。";
+
+  return '✅ 資料庫檢查完成！\n' + log.join('\n');
 }
+
 
 function verifyAdmin(pwd) {
   const configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
@@ -129,6 +176,34 @@ function updateQuizSettings(newCount) {
   return "✅ 題數已更新為 " + count + " 題！";
 }
 
+
+// ==========================================
+// 1b. 資料夾 ID 管理
+// ==========================================
+function updateFolderId(folderId) {
+  const configSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Config');
+  if (!configSheet) throw new Error('找不到 Config 設定頁');
+  const cleanId = String(folderId || '').split('?')[0].trim();
+  const data = configSheet.getDataRange().getValues();
+  let found = false;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === 'PdfFolderId') {
+      configSheet.getRange(i + 1, 2).setValue(cleanId);
+      found = true;
+      break;
+    }
+  }
+  if (!found) configSheet.appendRow(['PdfFolderId', cleanId]);
+  // 清除 PDF 快取，下次出題重新讀
+  try { CacheService.getScriptCache().remove('PdfText_' + cleanId); } catch(e) {}
+  return '✅ 資料夾 ID 已儲存：' + cleanId;
+}
+
+function getFolderId() {
+  const cfg = getConfig();
+  const id = String(cfg.PdfFolderId || '').split('?')[0].trim();
+  return (id && !id.includes('選填')) ? id : '';
+}
 
 // ==========================================
 // 2. 任務與學生管理（新增科目欄）
@@ -181,20 +256,21 @@ function getStudents(taskName) {
 
 
 // ==========================================
+// ==========================================
 // 3. PDF 工具函數
+// 【v5.1】完全不需要 Drive API 進階服務
+// scanFolder：只用內建 DriveApp
+// extractPdfText：用 ScriptApp.getOAuthToken() + UrlFetchApp 做 OCR
 // ==========================================
 
 /**
- * 掃描資料夾：回傳資料夾內所有 PDF 的清單（供前端預覽用）
- * @param {string} folderId - Google Drive 資料夾 ID
- * @returns {{ count: number, files: [{name, id}] }}
+ * 掃描資料夾：列出所有 PDF（不需任何進階服務）
  */
 function scanFolder(folderId) {
-  if (!folderId || folderId.trim() === '' || folderId.includes('請貼上')) {
-    throw new Error('請先填入有效的資料夾 ID');
-  }
+  if (!folderId || folderId.trim() === '') throw new Error('請先填入有效的資料夾 ID');
+  const cleanId = folderId.split('?')[0].trim(); // 去掉 ?usp=... 等多餘參數
   try {
-    const folder = DriveApp.getFolderById(folderId);
+    const folder = DriveApp.getFolderById(cleanId);
     const iter   = folder.getFilesByMimeType('application/pdf');
     const files  = [];
     while (iter.hasNext()) {
@@ -203,54 +279,111 @@ function scanFolder(folderId) {
     }
     return { folderName: folder.getName(), count: files.length, files: files };
   } catch (err) {
-    throw new Error('無法讀取資料夾：' + err.message + '\n請確認：① 資料夾 ID 正確 ② 已將資料夾共用給此 Google 帳號');
+    throw new Error('無法讀取資料夾：' + err.message +
+      '\n請重新部署 GAS 並在授權視窗點「允許」。');
   }
 }
 
 /**
- * 從單一 PDF 讀取文字（使用 Drive OCR）
- * @param {string} fileId
- * @returns {string} 最多 6000 字的純文字
+ * 從單一 PDF 讀取文字
+ * 【不需要 Drive API 進階服務】
+ * 改用 ScriptApp.getOAuthToken() + UrlFetchApp 呼叫 Drive REST API
  */
 function extractPdfText(fileId) {
+  const token = ScriptApp.getOAuthToken();
+
   try {
-    const resource = {
-      title: '_temp_ocr_' + Date.now(),
+    // 方法一：先嘗試直接 export 為純文字（適用有文字層的 PDF）
+    const exportResp = UrlFetchApp.fetch(
+      'https://www.googleapis.com/drive/v3/files/' + fileId +
+      '/export?mimeType=text%2Fplain',
+      {
+        headers: { Authorization: 'Bearer ' + token },
+        muteHttpExceptions: true
+      }
+    );
+    if (exportResp.getResponseCode() === 200) {
+      const txt = exportResp.getContentText();
+      if (txt && txt.trim().length > 30) {
+        return txt.length > 6000 ? txt.substring(0, 6000) + '\n...(略)' : txt;
+      }
+    }
+  } catch(e) {}
+
+  // 方法二：OCR（適用掃描版 PDF）
+  // 用 multipart upload 把 PDF 上傳並讓 Drive 自動 OCR 轉成 Google Doc
+  try {
+    const file     = DriveApp.getFileById(fileId);
+    const blob     = file.getBlob();
+    const boundary = 'ocr_' + Date.now();
+    const metadata = JSON.stringify({
+      name    : '_ocr_' + Date.now(),
       mimeType: 'application/vnd.google-apps.document'
-    };
-    const tempDoc = Drive.Files.copy(resource, fileId, { ocr: true, ocrLanguage: 'zh-TW' });
-    const docText = DocumentApp.openById(tempDoc.id).getBody().getText();
-    DriveApp.getFileById(tempDoc.id).setTrashed(true);
-    // 單檔限 6000 字，多檔合併後統一限 10000 字
+    });
+    const b64 = Utilities.base64Encode(blob.getBytes());
+    const body =
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      metadata + '\r\n' +
+      '--' + boundary + '\r\n' +
+      'Content-Type: application/pdf\r\n' +
+      'Content-Transfer-Encoding: base64\r\n\r\n' +
+      b64 + '\r\n--' + boundary + '--';
+
+    const uploadResp = UrlFetchApp.fetch(
+      'https://www.googleapis.com/upload/drive/v3/files' +
+      '?uploadType=multipart',
+      {
+        method     : 'POST',
+        contentType: 'multipart/related; boundary=' + boundary,
+        payload    : body,
+        headers    : { Authorization: 'Bearer ' + token },
+        muteHttpExceptions: true
+      }
+    );
+
+    if (uploadResp.getResponseCode() !== 200) {
+      throw new Error('OCR 上傳失敗（HTTP ' + uploadResp.getResponseCode() + '）');
+    }
+
+    const newFileId = JSON.parse(uploadResp.getContentText()).id;
+    Utilities.sleep(2000); // 等 Google 完成 OCR
+
+    const docText = DocumentApp.openById(newFileId).getBody().getText();
+
+    // 刪除暫存 Doc
+    try {
+      UrlFetchApp.fetch(
+        'https://www.googleapis.com/drive/v3/files/' + newFileId,
+        { method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+          muteHttpExceptions: true }
+      );
+    } catch(e) {}
+
     return docText.length > 6000 ? docText.substring(0, 6000) + '\n...(略)' : docText;
+
   } catch (err) {
-    throw new Error('PDF 讀取失敗（' + err.message + '）。請確認已開啟 Drive API 進階服務。');
+    throw new Error('PDF 讀取失敗：' + err.message);
   }
 }
 
 /**
- * 【主要新功能】讀取資料夾內所有 PDF，合併文字後交給 Gemini 出題
- * @param {string} folderId   - Google Drive 資料夾 ID（老師一次設定）
- * @param {string[]} nodesArray
- * @param {string} grade
- * @param {string} subject
- * @param {number} batchIndex
+ * 讀取資料夾內所有 PDF，合併文字後出題
  */
 function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchIndex) {
-  if (!folderId || folderId.trim() === '') throw new Error('請先在系統設定填入 Google Drive 資料夾 ID');
+  if (!folderId || folderId.trim() === '') throw new Error('請先設定 Google Drive 資料夾 ID');
+  const cleanId = folderId.split('?')[0].trim();
 
-  // ── 第一批才讀 PDF（後續批次快取重用，節省時間）──
-  const cache    = CacheService.getScriptCache();
-  const PDF_KEY  = 'PdfText_' + folderId;
-  let   pdfText  = cache.get(PDF_KEY);
+  const cache   = CacheService.getScriptCache();
+  const PDF_KEY = 'PdfText_' + cleanId;
+  let   pdfText = cache.get(PDF_KEY);
 
   if (!pdfText) {
-    // 掃描資料夾，讀取全部 PDF
     let folder;
     try {
-      folder = DriveApp.getFolderById(folderId);
+      folder = DriveApp.getFolderById(cleanId);
     } catch (err) {
-      throw new Error('無法開啟資料夾（' + err.message + '）\n請確認資料夾 ID 正確且已共用。');
+      throw new Error('無法開啟資料夾（' + err.message + '）');
     }
 
     const iter  = folder.getFilesByMimeType('application/pdf');
@@ -265,7 +398,6 @@ function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchInde
           Logger.log('已讀取：' + f.getName() + '（' + txt.length + ' 字）');
         }
       } catch (readErr) {
-        // 單一 PDF 讀取失敗時記錄但不中斷
         Logger.log('跳過：' + f.getName() + ' → ' + readErr.message);
         texts.push('【' + f.getName() + '】（讀取失敗，略過）');
       }
@@ -273,21 +405,16 @@ function generateBatchFromFolder(folderId, nodesArray, grade, subject, batchInde
 
     if (texts.length === 0) throw new Error('資料夾內沒有可讀取的 PDF，請確認檔案格式正確。');
 
-    // 合併，限制 10000 字避免超過 Gemini Token 上限
     pdfText = texts.join('\n\n');
     if (pdfText.length > 10000) {
       pdfText = pdfText.substring(0, 10000) + '\n\n...(內容過長，已截斷)';
     }
-
-    // 快取 30 分鐘，同一次出題任務多批次共用
     try { cache.put(PDF_KEY, pdfText, 1800); } catch (e) {}
   }
 
   return _doGenerateBatch(nodesArray, grade, subject || '數學', batchIndex, pdfText);
 }
 
-
-// ==========================================
 // 4. 出題 Prompt 工廠
 // 依科目回傳對應的命題指令
 // ==========================================

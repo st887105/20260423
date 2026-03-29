@@ -269,12 +269,17 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label text-muted small mb-1">PDF 教材資料夾 ID</label>
-                                <input type="text" id="setting-folder-id" class="form-control form-control-sm" placeholder="Google Drive 資料夾 ID">
-                                <div class="form-text">
-                                    📌 填入後請至 Config 試算表的 <code>PdfFolderId</code> 列存入。<br>
-                                    系統出題時會自動讀取資料夾內<b>全部 PDF</b>，不需指定單一檔案。
+                                <div class="input-group">
+                                    <input type="text" id="setting-folder-id" class="form-control form-control-sm"
+                                           placeholder="貼上 Google Drive 資料夾 ID">
+                                    <button class="btn btn-warning btn-sm" onclick="saveFolderId()">
+                                        <i class="fa-solid fa-floppy-disk"></i> 儲存
+                                    </button>
                                 </div>
-                                <button class="btn btn-outline-secondary btn-sm mt-1" onclick="saveFolderId()">如何填入？</button>
+                                <div class="form-text mt-1">
+                                    📌 資料夾網址中 <code>/folders/</code> 後面那串即為 ID。<br>
+                                    儲存後系統出題時自動讀取資料夾內<b>全部 PDF</b>。
+                                </div>
                             </div>
                             <hr>
                             <button class="btn btn-outline-secondary w-100 mb-2" onclick="API.setupDatabase()"><i class="fa-solid fa-database"></i> 初始化資料庫（v5.0）</button>
@@ -352,6 +357,8 @@ const API = {
     scanFolder:                fid                          => fetchAPI('scanFolder', { folderId: fid }),
     getQuizSettings:           ()                           => fetchAPI('getQuizSettings'),
     updateQuizSettings:        c                            => fetchAPI('updateQuizSettings', { count: c }),
+    updateFolderId:            fid                          => fetchAPI('updateFolderId', { folderId: fid }),
+    getFolderId:               ()                           => fetchAPI('getFolderId'),
     clearBankCache:            ()                           => fetchAPI('clearBankCache'),
     getQuestionErrorRates:     t                            => fetchAPI('getQuestionErrorRates', { taskName: t }),
     getTaskResults:            t                            => fetchAPI('getTaskResults', { taskName: t }),
@@ -406,6 +413,11 @@ async function loginAdmin() {
             Swal.close(); switchView('view-admin');
             const s = await API.getQuizSettings();
             document.getElementById('setting-quiz-count').value = s.quizCount;
+            // 自動載入已儲存的資料夾 ID
+            try {
+                const fid = await API.getFolderId();
+                if (fid) document.getElementById('setting-folder-id').value = fid;
+            } catch(e) {}
             await populateAdminTaskSelects();
         } else { Swal.fire('錯誤', '密碼不正確', 'error'); }
     } catch (err) { Swal.fire('錯誤', '連線失敗：' + err.message, 'error'); }
@@ -435,20 +447,16 @@ async function saveQuizSettings() {
     Swal.fire('成功', msg, 'success');
 }
 
-function saveFolderId() {
-    Swal.fire({
-        title: '如何設定資料夾 ID',
-        html: `<div class="text-start small">
-            <p>📌 <b>步驟一：</b>取得資料夾 ID</p>
-            <p>在 Google Drive 開啟您的教材資料夾，網址格式：<br>
-            <code>drive.google.com/drive/folders/<b>【這串就是 ID】</b></code></p>
-            <p>📌 <b>步驟二：</b>填入試算表</p>
-            <p>到 Google 試算表 → Config 分頁 → 找 <code>PdfFolderId</code> 那列 → 把 ID 貼到 Value 欄</p>
-            <p>📌 <b>步驟三（使用時）：</b></p>
-            <p>切換到「PDF 資料夾出題」模式 → 貼上資料夾 ID → 點「掃描」確認找到 PDF → 開始出題</p>
-        </div>`,
-        icon: 'info'
-    });
+async function saveFolderId() {
+    const folderId = document.getElementById('setting-folder-id').value.trim();
+    if (!folderId) return Swal.fire('提示', '請先填入 Google Drive 資料夾 ID', 'warning');
+    Swal.fire({ title: '儲存中...', didOpen: () => Swal.showLoading() });
+    try {
+        const msg = await API.updateFolderId(folderId);
+        Swal.fire('✅ 儲存成功', msg + '\n\n下次使用 PDF 出題時，系統會自動讀取此資料夾。', 'success');
+    } catch(err) {
+        Swal.fire('儲存失敗', err.message, 'error');
+    }
 }
 
 // ===============================================================
