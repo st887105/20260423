@@ -463,6 +463,15 @@ function refreshAllTaskSelects() {
 }
 
 // ─── 登入 ─────────────────────────────────────────────────────────────
+// ★ Issue1：姓名去識別化（中間字元→O）
+function maskName(name) {
+  if (!name) return '';
+  if (name.length <= 1) return name;
+  if (name.length === 2) return name[0] + 'O';
+  // 長度3以上：保留首尾，中間全換 O
+  return name[0] + 'O'.repeat(name.length - 2) + name[name.length - 1];
+}
+
 async function loadStudents() {
   const taskName = document.getElementById('task-select').value;
   const sel = document.getElementById('student-select');
@@ -470,8 +479,10 @@ async function loadStudents() {
   sel.disabled = true; sel.innerHTML = '<option>載入中...</option>';
   try {
     const students = await API.getStudents(taskName);
-    sel.innerHTML = students.map(s =>
-      `<option value="${JSON.stringify({seatNo:s.seatNo, name:s.name, weakNode:s.weakNode})}">${s.seatNo}號 ${s.name}</option>`
+    // ★ Issue3修正：用 index 當 value，避免 JSON 雙引號破壞 HTML 屬性
+    window._studentList = students;
+    sel.innerHTML = students.map((s,i) =>
+      `<option value="${i}">${s.seatNo}號 ${maskName(s.name)}</option>`
     ).join('');
     sel.disabled = false;
   } catch(e) { sel.innerHTML = '<option>載入失敗</option>'; }
@@ -493,7 +504,8 @@ async function startQuiz() {
   const stuEl  = document.getElementById('student-select');
   if (!taskEl.value || stuEl.disabled) return Swal.fire('提示','請先選擇任務與姓名','info');
 
-  const stu      = JSON.parse(stuEl.value);
+  const stu      = window._studentList[parseInt(stuEl.value)] || {};
+  if (!stu.name) return Swal.fire('提示','請重新選擇學生姓名','info');
   const taskName = taskEl.value;
   Swal.fire({title:'出題中...', allowOutsideClick:false, didOpen:()=>Swal.showLoading()});
   try {
@@ -579,7 +591,7 @@ async function submitQuiz() {
   const correct = details.filter(d => d.isCorrect).length;
   const score   = Math.round((correct/currentQuestions.length)*100);
 
-  const stu      = JSON.parse(document.getElementById('student-select').value);
+  const stu      = window._studentList[parseInt(document.getElementById('student-select').value)] || {};
   const taskName = document.getElementById('task-select').value;
 
   Swal.fire({title:'送出中...', allowOutsideClick:false, didOpen:()=>Swal.showLoading()});
@@ -818,7 +830,15 @@ async function loadClassAnalysis() {
     nodes.forEach((n,i) => {
       const bc = n.wrongRate>=70?'#e53935':n.wrongRate>=40?'#fb8c00':'#43a047';
       const tags = n.students.map(s=>`<span class="node-student-tag">${s}</span>`).join('');
-      const relQs = (nodeQuestions[n.node]||[]).slice(0,5);
+      // 嘗試精確比對，若無則模糊比對（部分包含）
+      const exactMatch = nodeQuestions[n.node] || [];
+      const fuzzyMatch = exactMatch.length === 0
+        ? qErrors.filter(q => q.node && (
+            q.node.includes(n.node) || n.node.includes(q.node) ||
+            q.questionText.includes(n.node)
+          ))
+        : [];
+      const relQs = (exactMatch.length ? exactMatch : fuzzyMatch).slice(0,5);
       const qRows = relQs.map((q,qi)=>
         `<div class="mb-2 p-2" style="background:#fafafa;border-radius:6px;font-size:.82rem;border-left:3px solid ${q.wrongRate>=70?'#e53935':'#fb8c00'}">
           <strong>${qi+1}.</strong>（錯誤率 ${q.wrongRate}%）${q.questionText}
