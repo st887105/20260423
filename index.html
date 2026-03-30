@@ -525,17 +525,22 @@ function renderQuestion() {
   const n = currentQuestions.length;
   document.getElementById('quiz-progress').style.width = Math.round(((currentQIndex+1)/n)*100) + '%';
 
-  const diffColor = {easy:'#e8f5e9', medium:'#fff8e1', hard:'#ffebee'}[q.difficulty] || '#f5f5f5';
-  const diffText  = {easy:'#388e3c', medium:'#f57f17', hard:'#c62828'}[q.difficulty] || '#666';
-  const diffLabel = {easy:'易', medium:'中', hard:'難'}[q.difficulty] || q.difficulty;
-  const typeLabel = {single:'選擇題', fill:'填充題'}[q.type] || q.type;
+  // ★ Fix：正規化 difficulty（AI 可能回傳 very_easy 等非標準值）
+  const normDiff  = /hard/i.test(q.difficulty) ? 'hard' : /easy/i.test(q.difficulty) ? 'easy' : 'medium';
+  const diffColor = {easy:'#e8f5e9', medium:'#fff8e1', hard:'#ffebee'}[normDiff];
+  const diffText  = {easy:'#388e3c', medium:'#f57f17', hard:'#c62828'}[normDiff];
+  const diffLabel = {easy:'易', medium:'中', hard:'難'}[normDiff];
+  // ★ Fix：正規化 type（AI 可能回傳 fill_in_the_blank、single_choice 等）
+  const normType  = /fill/i.test(q.type) ? 'fill' : 'single';
+  const typeLabel = normType === 'single' ? '選擇題' : '填充題';
 
   const LABELS = ['A','B','C','D','E','F'];
   let optionsHtml = '';
-  if (q.type === 'single') {
+  // ★ Fix：改用 option index 當 onclick 參數，避免中文雙引號破壞 HTML 屬性
+  if (normType === 'single') {
     optionsHtml = (q.options||[]).map((opt, i) => {
       const sel = userAnswers[currentQIndex] === opt ? 'selected' : '';
-      return `<button class="option-btn ${sel}" onclick="selectOption(${currentQIndex},${JSON.stringify(opt)},this)">
+      return `<button class="option-btn ${sel}" onclick="selectOption(${currentQIndex},${i},this)">
         <span class="option-prefix">${LABELS[i]||i+1}</span>${opt}
       </button>`;
     }).join('');
@@ -555,13 +560,16 @@ function renderQuestion() {
     <div class="fw-bold mb-3" style="font-size:1.05rem;line-height:1.7">${currentQIndex+1}. ${q.text}</div>
     ${optionsHtml}`;
 
-  if (q.type === 'fill') setTimeout(() => document.getElementById('fill-input')?.focus(), 80);
+  if (normType === 'fill') setTimeout(() => document.getElementById('fill-input')?.focus(), 80);
   document.getElementById('btn-prev').disabled    = currentQIndex === 0;
   document.getElementById('btn-next').style.display   = currentQIndex < n-1 ? '' : 'none';
   document.getElementById('btn-submit').style.display  = currentQIndex === n-1 ? '' : 'none';
 }
 
-function selectOption(idx, value, btn) {
+function selectOption(idx, optIndex, btn) {
+  // ★ Fix：用 optIndex 從 currentQuestions 取真實選項文字
+  const q = currentQuestions[idx];
+  const value = (q && q.options) ? q.options[optIndex] : optIndex;
   userAnswers[idx] = value;
   btn.closest('#question-container').querySelectorAll('.option-btn').forEach(b => b.classList.remove('selected'));
   btn.classList.add('selected');
@@ -618,16 +626,16 @@ function showStudentResult(score, correct, total, timeSpent, details) {
   details.forEach((d,i) => {
     const cls = d.isCorrect ? 'result-correct' : 'result-wrong';
     let userDisplay = d.userAns || '（未作答）';
-    if (d.type==='single' && d.options && d.options.length>0) {
+    const isSingle = !/fill/i.test(d.type||'');  // ★ Fix：容錯判斷
+    if (isSingle && d.options && d.options.length>0) {
       const idx = d.options.indexOf(d.userAns);
       if (idx>=0) userDisplay = `${LABELS[idx]}. ${d.userAns}`;
     }
     let wrongHint = '';
     if (!d.isCorrect) {
-      // 顯示解題 hint（若題目有附）
       const hintHtml = d.hint ? `<div class="mt-1 small" style="color:#7b1fa2">💡 提示：${d.hint}</div>` : '';
       let ca = d.displayCorrectAns || d.correctAns;
-      if (d.type==='single' && d.options && d.options.length>0) {
+      if (isSingle && d.options && d.options.length>0) {
         const ci = d.options.indexOf(ca);
         if (ci>=0) ca = `${LABELS[ci]}. ${ca}`;
       }
@@ -742,7 +750,8 @@ function toggleResultDetail(ri) {
   let html = '';
   details.forEach((d,i) => {
     let ud = d.userAns||'（未作答）';
-    if (d.type==='single' && d.options && d.options.length>0) {
+    const isSingle2 = !/fill/i.test(d.type||'');
+    if (isSingle2 && d.options && d.options.length>0) {
       const idx = d.options.indexOf(d.userAns);
       if (idx>=0) ud = `${LABELS[idx]}. ${d.userAns}`;
     }
