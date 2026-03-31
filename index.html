@@ -90,7 +90,7 @@
 <header class="app-header">
   <div class="container text-center">
     <h2><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
-    <p>數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救 </p>
+    <p>數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救（內容僅供參考）</p>
   </div>
 </header>
 
@@ -354,24 +354,20 @@ async function fetchAPI(action, data = {}) {
     localStorage.setItem('GAS_API_URL', url);
     GAS_API_URL = url;
   }
-  // ★ 改用 GET 請求，完全避免無痕模式跨域 cookie 問題
-  //   GET 是「簡單請求」，不觸發 CORS preflight，也不依賴跨站 cookie
-  const payload = encodeURIComponent(JSON.stringify({ action, data }));
-  const getUrl  = GAS_API_URL + '?payload=' + payload;
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   let resp;
   try {
-    resp = await fetch(getUrl, {
-      method: 'GET', redirect: 'follow', signal: controller.signal
+    resp = await fetch(GAS_API_URL, {
+      method: 'POST', redirect: 'follow', signal: controller.signal,
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action, data })
     });
   } catch(netErr) {
     const isAbort = netErr.name === 'AbortError';
     throw new Error(isAbort
-      ? '連線逾時（15秒）：請確認 GAS 已重新部署，且存取權限設為「任何人」。'
-      : 'GAS 連線失敗：請確認 GAS 已重新部署。
-(' + netErr.message + ')'
+      ? '連線逾時（15秒）：請確認 GAS 已部署且存取權限為「任何人」。'
+      : 'GAS 連線失敗：請確認 GAS 已重新部署。(' + netErr.message + ')'
     );
   } finally {
     clearTimeout(timer);
@@ -380,6 +376,7 @@ async function fetchAPI(action, data = {}) {
   if (result.status === 'success') return result.data;
   throw new Error(result.message);
 }
+
 
 // ─── API 物件 ────────────────────────────────────────────────────────
 const API = {
