@@ -48,6 +48,10 @@ function doPost(e) {
 }
 
 function doGet(e) {
+  // ★ 支援 GET 方式呼叫 API（解決無痕模式跨域 cookie 被擋問題）
+  if (e && e.parameter && e.parameter.payload) {
+    return doPost({ postData: { contents: e.parameter.payload } });
+  }
   return ContentService.createTextOutput(
     '✅ 車城國小 AI 補救系統 API v6.1 運作中\n請從前端網頁連線。'
   );
