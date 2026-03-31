@@ -90,7 +90,7 @@
 <header class="app-header">
   <div class="container text-center">
     <h2><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
-    <p>數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救（內容僅供參考）</p>
+    <p>數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救 </p>
   </div>
 </header>
 
@@ -354,11 +354,26 @@ async function fetchAPI(action, data = {}) {
     localStorage.setItem('GAS_API_URL', url);
     GAS_API_URL = url;
   }
-  const resp   = await fetch(GAS_API_URL, {
-    method:'POST', redirect:'follow',
-    headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({ action, data })
-  });
+  // ★ 加入 15 秒 timeout，避免網路不通時無限等待
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  let resp;
+  try {
+    resp = await fetch(GAS_API_URL, {
+      method:'POST', redirect:'follow', signal: controller.signal,
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action, data })
+    });
+  } catch(netErr) {
+    // 提供更明確的診斷訊息
+    const isAbort = netErr.name === 'AbortError';
+    throw new Error(isAbort
+      ? '連線逾時（15秒）：請確認 GAS 已重新部署，且存取權限設為「任何人」。'
+      : 'GAS 連線失敗（Failed to fetch）\n可能原因：\n① GAS 尚未部署或部署已過期\n② 請至 GAS → 部署 → 新增部署，重新發布後再試。'
+    );
+  } finally {
+    clearTimeout(timer);
+  }
   const result = await resp.json();
   if (result.status === 'success') return result.data;
   throw new Error(result.message);
