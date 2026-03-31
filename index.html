@@ -84,7 +84,7 @@
   範例：'https://script.google.com/macros/s/AKfycb.../exec'
 -->
 <script>
-  const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbz9xx4YsO5r1q9uQJ_0MraFwiFy2oHDbeTL433Tqs3S6Evz3E3pQxjfA_3lPqDGHrzTnw/exec';
+  const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbz9xx4YsO5r1q9uQJ_0MraFwiFy2oHDbeTL433Tqs3S6Evz3E3pQxjfA_3IPqDGHrzTnw/exec';
 </script>
 
 <header class="app-header">
@@ -354,14 +354,16 @@ async function fetchAPI(action, data = {}) {
     localStorage.setItem('GAS_API_URL', url);
     GAS_API_URL = url;
   }
+  // ★ 使用 GET + payload 參數，同時相容一般模式與無痕模式
+  //   GET 屬於「簡單請求」，不依賴跨站 cookie，無痕模式也能正常運作
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   let resp;
   try {
-    resp = await fetch(GAS_API_URL, {
-      method: 'POST', redirect: 'follow', signal: controller.signal,
-      headers: {'Content-Type': 'text/plain;charset=utf-8'},
-      body: JSON.stringify({ action, data })
+    const payload = encodeURIComponent(JSON.stringify({ action, data }));
+    const url_get = GAS_API_URL + '?payload=' + payload;
+    resp = await fetch(url_get, {
+      method: 'GET', redirect: 'follow', signal: controller.signal
     });
   } catch(netErr) {
     const isAbort = netErr.name === 'AbortError';
