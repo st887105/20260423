@@ -491,21 +491,25 @@ window.addEventListener('load', async () => {
     document.getElementById('setting-quiz-count').value = s.quizCount || 10;
   } catch(e) { console.warn('初始化部分失敗：', e.message); }
 
-  // ★ 從 sessionStorage 恢復上次上傳的節點，讓使用者無需重新上傳即可重新生成
-  try {
-    const saved = sessionStorage.getItem('lastUpload');
-    if (saved) {
-      const { nodes, taskName, grade, subject } = JSON.parse(saved);
-      if (nodes && nodes.length > 0) {
-        globalUniqueNodes = nodes;
-        document.getElementById('weak-count').textContent = nodes.length;
-        if (taskName) document.getElementById('new-task-name').value = taskName;
-        if (grade)   document.getElementById('task-grade').value   = grade;
-        if (subject) document.getElementById('task-subject').value = subject;
-        document.getElementById('ai-generation-panel').style.display = 'block';
+  // ★ sessionStorage 恢復：獨立執行，不依賴 API 連線，進入後台立即可見
+  // 恢復面板的函數，進入後台時也會再呼叫一次
+  window._restoreUploadPanel = function() {
+    try {
+      const saved = sessionStorage.getItem('lastUpload');
+      if (saved) {
+        const { nodes, taskName, grade, subject } = JSON.parse(saved);
+        if (nodes && nodes.length > 0) {
+          globalUniqueNodes = nodes;
+          document.getElementById('weak-count').textContent = nodes.length;
+          if (taskName) document.getElementById('new-task-name').value = taskName;
+          if (grade)   document.getElementById('task-grade').value   = grade;
+          if (subject) document.getElementById('task-subject').value = subject;
+          document.getElementById('ai-generation-panel').style.display = 'block';
+        }
       }
-    }
-  } catch(e) {}
+    } catch(e) {}
+  };
+  window._restoreUploadPanel();
 });
 
 function refreshAllTaskSelects() {
@@ -553,7 +557,12 @@ async function loginAdmin() {
   if (!pwd) return;
   try {
     const ok = await API.verifyAdmin(pwd);
-    if (ok) { document.getElementById('admin-pwd').value = ''; switchView('view-admin'); }
+    if (ok) {
+      document.getElementById('admin-pwd').value = '';
+      switchView('view-admin');
+      // ★ 進入後台時恢復上次上傳的面板
+      setTimeout(() => { if (window._restoreUploadPanel) window._restoreUploadPanel(); }, 100);
+    }
     else Swal.fire('錯誤','密碼不正確','error');
   } catch(e) { Swal.fire('錯誤', e.message, 'error'); }
 }
@@ -1110,12 +1119,19 @@ async function processExcel() {
       const studentData=[], nodeSet=new Set();
 
       if (isTypeA) {
-        // 找出所有節點欄（row1 中含 '/' 的欄），節點答對率在 colIdx+7
+        // ★ 雙格式偵測：
+        //   國語格式：row1 節點欄含 '/'，答對率在 colIdx+7
+        //   數學格式：row1 節點欄含課綱代碼（如 5-n-14-S05），答對率在 colIdx+9
         const nodeColMap = [];
         row1.forEach((cell, i) => {
           const s = String(cell||'');
-          if (s.includes('/') && s.length > 3)
+          if (s.includes('/') && s.length > 3) {
+            // 國語格式
             nodeColMap.push({ colIdx: i+7, nodeName: s.split('/').pop().trim() });
+          } else if (/^\d+-[a-z]-\d+|^\d+-[a-z]{1,2}-\d+/i.test(s) && s.length > 8) {
+            // 數學格式：5-n-14-S05 xxx 或 6-a-01-S03 xxx
+            nodeColMap.push({ colIdx: i+9, nodeName: s.replace(/^[^\s]+\s+/, '').replace(/。$/, '').trim() });
+          }
         });
 
         raw.slice(3).forEach(row => {                        // 跳過3行標題
@@ -1125,13 +1141,21 @@ async function processExcel() {
           if (!m) return;
           const seatNo = m[1].trim(), name = m[2].trim();
           const overallAcc = row[3] !== '' ? String(row[3]) : '';
-          // 弱點 = 答對率 < 60
+          // ★ 弱點 = 答對率為數字且 < 60（'-' 或空白 = 未測，不算弱點）
           const weakList = nodeColMap
-            .filter(nc => { const a=parseFloat(row[nc.colIdx]); return !isNaN(a) && a < 60; })
+            .filter(nc => {
+              const v = row[nc.colIdx];
+              if (v === '-' || v === '' || v === null || v === undefined) return false;
+              const a = parseFloat(v);
+              return !isNaN(a) && a < 60;
+            })
             .map(nc => nc.nodeName);
           nodeColMap.forEach(nc => {
-            const a=parseFloat(row[nc.colIdx]);
-            if (!isNaN(a)) nodeSet.add(nc.nodeName);
+            const v = row[nc.colIdx];
+            if (v !== '-' && v !== '' && v !== null && v !== undefined) {
+              const a = parseFloat(v);
+              if (!isNaN(a)) nodeSet.add(nc.nodeName);
+            }
           });
           studentData.push({ seatNo, name, accuracy: overallAcc, weakNodes: weakList.join('、') });
         });
