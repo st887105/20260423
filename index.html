@@ -90,7 +90,7 @@
 <header class="app-header">
   <div class="container text-center">
     <h2><i class="fa-solid fa-graduation-cap me-2"></i>車城國小｜學力檢測 AI 智慧補救系統</h2>
-    <p>數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救（車城國小公開測試版本）</p>
+    <p>數學科 × 國語科 ｜ Gemini AI 差異化出題 ｜ PDF 教材出題 ｜ 弱點節點精準補救（內容僅供參考）</p>
   </div>
 </header>
 
@@ -197,10 +197,23 @@
 
             <!-- ★ AI 出題面板（兩個區塊共用）-->
             <div id="ai-generation-panel" class="ai-panel mt-3">
-              <h6 class="text-success"><i class="fa-solid fa-robot me-1"></i>
-                任務：<span id="ai-panel-task-name" class="fw-bold text-dark"></span>
-                ｜ 共有 <span id="weak-count" class="fw-bold">0</span> 個弱點節點
-              </h6>
+              <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                <h6 class="text-success mb-0"><i class="fa-solid fa-robot me-1"></i>
+                  任務：<span id="ai-panel-task-name" class="fw-bold text-dark"></span>
+                  ｜ 共有 <span id="weak-count" class="fw-bold">0</span> 個弱點節點
+                </h6>
+                <!-- ★ 追加 / 覆蓋重建 切換 -->
+                <div class="d-flex align-items-center gap-2 small">
+                  <span class="text-muted">出題模式：</span>
+                  <div class="btn-group btn-group-sm" role="group">
+                    <input type="radio" class="btn-check" name="gen-mode" id="mode-append"   value="append"    checked autocomplete="off">
+                    <label class="btn btn-outline-secondary" for="mode-append">➕ 追加</label>
+                    <input type="radio" class="btn-check" name="gen-mode" id="mode-overwrite" value="overwrite" autocomplete="off">
+                    <label class="btn btn-outline-danger"    for="mode-overwrite">🔄 覆蓋重建</label>
+                  </div>
+                </div>
+              </div>
+              <div id="gen-mode-hint" class="small text-muted mt-1">追加模式：在現有題庫基礎上新增題目。</div>
               <div class="source-toggle mt-3">
                 <div class="source-btn active" id="src-btn-ai"    onclick="switchSource('ai')">🤖 純 AI</div>
                 <div class="source-btn"        id="src-btn-pdf"   onclick="switchSource('pdf')">📄 限定 PDF</div>
@@ -473,6 +486,7 @@ const API = {
   updateFolderId:            fid              => fetchAPI('updateFolderId',          {folderId:fid}),
   getFolderId:               ()               => fetchAPI('getFolderId'),
   clearBankCache:            ()               => fetchAPI('clearBankCache'),
+  clearNodesFromBank:        (nd,g,s)         => fetchAPIPost('clearNodesFromBank', {nodesArray:nd, grade:g, subject:s}),
   getTaskResults:            t                => fetchAPI('getTaskResults',          {taskName:t}),
   getQuestionErrorRates:     t                => fetchAPI('getQuestionErrorRates',   {taskName:t}),
   analyzeClassWeakNodes:     t                => fetchAPI('analyzeClassWeakNodes',   {taskName:t}),
@@ -1149,6 +1163,18 @@ function switchSource(src) {
   document.getElementById('pdf-panel').style.display = src!=='ai' ? 'block' : 'none';
 }
 
+// ★ 出題模式切換提示
+document.addEventListener('change', e => {
+  if (e.target.name !== 'gen-mode') return;
+  const hint = document.getElementById('gen-mode-hint');
+  if (!hint) return;
+  hint.textContent = e.target.value === 'overwrite'
+    ? '覆蓋重建：先清除此任務舊題目，再重新生成（不影響其他任務）。'
+    : '追加模式：在現有題庫基礎上新增題目。';
+  hint.className = e.target.value === 'overwrite'
+    ? 'small text-danger mt-1' : 'small text-muted mt-1';
+});
+
 // ─── 擴充現有任務 ─────────────────────────────────────────────────────
 function loadExpandTask() {
   const sel   = document.getElementById('expand-task-select');
@@ -1313,12 +1339,39 @@ async function processExcel() {
 
 async function triggerAIGeneration() {
   if (!globalUniqueNodes.length) return Swal.fire('提示','請先解析 Excel','info');
+
+  // ★ 覆蓋重建模式：先清除舊題再生成
+  const modeEl    = document.querySelector('input[name="gen-mode"]:checked');
+  const isOverwrite = modeEl && modeEl.value === 'overwrite';
+  const grade   = document.getElementById('task-grade').value;
+  const subject = document.getElementById('task-subject').value;
+
+  if (isOverwrite) {
+    const { isConfirmed } = await Swal.fire({
+      title: '確認覆蓋重建',
+      html: `將清除此任務 <strong>${globalUniqueNodes.length}</strong> 個節點的所有舊題目，<br>再以目前選擇的來源重新生成。`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: '確定覆蓋',
+      cancelButtonText: '取消',
+      confirmButtonColor: '#e53935'
+    });
+    if (!isConfirmed) return;
+    Swal.fire({title:'清除舊題目中...', allowOutsideClick:false, didOpen:()=>Swal.showLoading()});
+    try {
+      const res = await API.clearNodesFromBank(globalUniqueNodes, grade, subject);
+      Swal.close();
+      Swal.fire('清除完成', res.message, 'success');
+    } catch(e) {
+      Swal.fire('清除失敗', e.message, 'error');
+      return;
+    }
+  }
+
   const btn = document.getElementById('btn-ai-generate');
   btn.disabled=true;
   document.getElementById('ai-progress-panel').style.display='block';
 
-  const grade   = document.getElementById('task-grade').value;
-  const subject = document.getElementById('task-subject').value;
   const fid     = document.getElementById('pdf-folder-id').value.trim();
   // ★ 每批改為3個節點，減少單次 Prompt 長度，降低超時機率
   const BATCH_SIZE=3, total=Math.ceil(globalUniqueNodes.length/BATCH_SIZE);

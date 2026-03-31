@@ -23,6 +23,7 @@ function doPost(e) {
       case 'getFolderId':               result = getFolderId(); break;
       case 'setupDatabase':             result = setupDatabase(); break;
       case 'clearBankCache':            result = clearBankCache(); break;
+      case 'clearNodesFromBank':        result = clearNodesFromBank(data.nodesArray, data.grade, data.subject); break;
       case 'uploadTaskData':            result = uploadTaskData(data.taskName, data.grade, data.subject, data.studentData, data.uniqueNodes); break;
       case 'generateBatch':             result = generateBatch(data.nodesArray, data.grade, data.subject, data.batchIndex); break;
       case 'generateBatchFromFolder':   result = generateBatchFromFolder(data.folderId, data.nodesArray, data.grade, data.subject, data.batchIndex, data.mode); break;
@@ -794,6 +795,32 @@ function _clearAllCaches() {
   ['BankData_V3','BankData_V2','BankData_V1'].forEach(k => {
     try { CacheService.getScriptCache().remove(k); } catch(e) {}
   });
+}
+
+// ★ 清除 Bank 中特定節點的題目（供覆蓋重建模式使用）
+function clearNodesFromBank(nodesArray, grade, subject) {
+  const bank = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Bank');
+  if (!bank || bank.getLastRow() <= 1) return { deleted: 0, message: '題庫為空，無需清除' };
+
+  const data     = bank.getRange(2, 1, bank.getLastRow()-1, 9).getValues();
+  const nodeSet  = new Set((nodesArray||[]).map(n => String(n).trim()));
+  const toDelete = [];
+
+  for (let i = data.length-1; i >= 0; i--) {
+    const rowNode    = String(data[i][1]||'').trim();
+    const rowGrade   = String(data[i][7]||'').trim();
+    const rowSubject = String(data[i][8]||'').trim();
+    const nodeMatch  = nodeSet.has(rowNode) ||
+      [...nodeSet].some(n => n.includes(rowNode) || rowNode.includes(n));
+    const gradeMatch   = !grade   || !rowGrade   || rowGrade   === grade;
+    const subjectMatch = !subject || !rowSubject || rowSubject === subject;
+    if (nodeMatch && gradeMatch && subjectMatch) toDelete.push(i+2); // +2 = 標題行 offset
+  }
+
+  // 從後往前刪，避免行號偏移
+  toDelete.forEach(r => bank.deleteRow(r));
+  _clearAllCaches();
+  return { deleted: toDelete.length, message: `✅ 已清除 ${toDelete.length} 道舊題目` };
 }
 
 function clearBankCache() {
