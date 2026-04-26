@@ -470,9 +470,9 @@ const WORKER_URL = 'https://gas-proxy.sunny-f0b.workers.dev';
 // ==========================================
 let CLAUDE_WORKER_URL = (function() {
   try {
-    return localStorage.getItem('claudeWorkerUrl') || 'https://YOUR-CLAUDE-WORKER.workers.dev';
+    return localStorage.getItem('claudeWorkerUrl') || 'claude-worksheet.sunny-f0b.workers.dev';
   } catch(e) {
-    return 'https://YOUR-CLAUDE-WORKER.workers.dev';
+    return 'claude-worksheet.sunny-f0b.workers.dev';
   }
 })();
 
