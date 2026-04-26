@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <!-- 版號更新為 v13.3：無痕模式直接使用預設 GAS URL，無需手動重新連線 -->
-  <title>車城國小｜學力檢測 AI 智慧補救系統 (v13.3)</title>
+  <!-- 版號更新為 v13.4：學習單改用 Claude Haiku API 前端直呼叫，解決 GAS 30秒超時問題 -->
+  <title>車城國小｜學力檢測 AI 智慧補救系統 (v13.4)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
@@ -83,6 +83,10 @@
     .node-preset-btn{display:inline-block;margin:3px;padding:4px 12px;border-radius:16px;border:1.5px solid #90caf9;background:#e3f2fd;color:#1565c0;font-size:.82rem;cursor:pointer;transition:all .18s;}
     .node-preset-btn:hover,.node-preset-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
     .gas-url-input{font-size:.78rem;font-family:monospace;padding:6px 10px;border-radius:8px;border:1px solid #ced4da;background:#f8f9fa;}
+    /* v13.4：Claude 生成中動畫 */
+    .claude-generating .ws-mgmt-card{border-color:#7c3aed;background:#f5f3ff;}
+    @keyframes claudePulse{0%,100%{opacity:1}50%{opacity:.6}}
+    .claude-pulse{animation:claudePulse 1.8s ease-in-out infinite;}
   </style>
 </head>
 <body>
@@ -292,15 +296,23 @@
               <div id="analysis-area"></div>
               <div class="mt-3" id="worksheet-area" style="display:none;">
                 <div class="ws-mgmt-card">
-                  <h6><i class="fa-solid fa-file-lines me-1"></i>AI 差異化補教講義</h6>
+                  <h6><i class="fa-solid fa-file-lines me-1"></i>AI 差異化補教講義
+                    <span class="badge bg-purple ms-2" style="background:#7c3aed!important;font-size:.65rem;">
+                      <i class="fa-solid fa-bolt me-1"></i>Claude Haiku
+                    </span>
+                  </h6>
                   <div id="ws-state-idle">
                     <button class="btn btn-warning btn-sm" onclick="genWorksheet()">
                       <i class="fa-solid fa-wand-magic-sparkles me-1"></i>生成講義（取前3大弱點節點）
                     </button>
+                    <p class="text-muted small mt-2 mb-0">
+                      <i class="fa-solid fa-bolt text-purple me-1" style="color:#7c3aed"></i>
+                      由 Claude Haiku 直接生成，速度快（約 10-15 秒）
+                    </p>
                   </div>
                   <div id="ws-gen-progress" style="display:none;" class="mt-2">
-                    <div class="progress quiz-progress mb-1"><div id="ws-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width:0%"></div></div>
-                    <span id="ws-progress-msg" class="text-muted small">生成中…</span>
+                    <div class="progress quiz-progress mb-1"><div id="ws-progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%;background:#7c3aed!important"></div></div>
+                    <span id="ws-progress-msg" class="text-muted small claude-pulse">✨ Claude Haiku 生成中…</span>
                   </div>
                   <div id="ws-state-done" style="display:none;" class="mt-2">
                     <div class="d-flex gap-2 flex-wrap align-items-center">
@@ -331,9 +343,25 @@
                         <button class="btn btn-warning" onclick="saveHelpUrl()">儲存</button>
                       </div>
                     </div>
+                    <!-- v13.4：Claude Worker URL 設定 -->
+                    <div class="mb-3 p-2 border border-purple rounded" style="border-color:#7c3aed!important;background:#f5f3ff;">
+                      <label class="form-label text-muted small fw-bold">
+                        <i class="fa-solid fa-bolt me-1" style="color:#7c3aed"></i>Claude Worker URL（學習單用）
+                      </label>
+                      <div class="input-group">
+                        <input type="text" id="setting-claude-worker-url" class="form-control form-control-sm font-monospace"
+                               placeholder="https://your-worker.workers.dev"
+                               value="">
+                        <button class="btn btn-sm" style="background:#7c3aed;color:#fff;" onclick="saveClaudeWorkerUrl()">套用</button>
+                      </div>
+                      <div class="text-muted" style="font-size:.72rem;margin-top:4px;">
+                        部署 <code>claude-worksheet-worker.js</code> 到 Cloudflare 後，貼上 Worker URL。
+                        儲存後立即生效，不需重新整理。
+                      </div>
+                    </div>
                     <hr>
                     <div class="mb-3">
-                      <label class="form-label text-muted small fw-bold">AI 模型選擇</label>
+                      <label class="form-label text-muted small fw-bold">AI 模型選擇（出題用）</label>
                       <div class="input-group input-group-sm">
                         <select id="setting-gemini-model" class="form-select font-monospace">
                           <option value="gemma-4-31b-it">✅ gemma-4-31b-it（目前可用｜1500次/天）</option>
@@ -358,8 +386,8 @@
                     <p class="small text-muted mb-2">可用變數：<code>{{GRADE}}</code>、<code>{{NODES}}</code>、<code>{{QCOUNT}}</code>、<code>{{PDF_CONTEXT}}</code></p>
                     <div class="mb-2"><div class="prompt-section-title">數學科 出題 Prompt</div><textarea id="prompt-math" class="form-control prompt-textarea" rows="5" placeholder="載入中..."></textarea></div>
                     <div class="mb-3"><div class="prompt-section-title">國語科 出題 Prompt</div><textarea id="prompt-chinese" class="form-control prompt-textarea" rows="5" placeholder="載入中..."></textarea></div>
-                    <div class="mb-2"><div class="prompt-section-title" style="border-color:#f57c00">數學科 學習單 Prompt</div><textarea id="prompt-math-ws" class="form-control prompt-textarea" rows="4" placeholder="載入中..."></textarea></div>
-                    <div><div class="prompt-section-title" style="border-color:#f57c00">國語科 學習單 Prompt</div><textarea id="prompt-chinese-ws" class="form-control prompt-textarea" rows="4" placeholder="載入中..."></textarea></div>
+                    <div class="mb-2"><div class="prompt-section-title" style="border-color:#f57c00">數學科 學習單 Prompt（Claude 使用）</div><textarea id="prompt-math-ws" class="form-control prompt-textarea" rows="4" placeholder="載入中..."></textarea></div>
+                    <div><div class="prompt-section-title" style="border-color:#f57c00">國語科 學習單 Prompt（Claude 使用）</div><textarea id="prompt-chinese-ws" class="form-control prompt-textarea" rows="4" placeholder="載入中..."></textarea></div>
                   </div>
                 </div>
               </div>
@@ -417,7 +445,7 @@
 
 <footer class="mt-4">
   <div class="container px-3">
-    車城國小資訊老師 @ Google Gemini 協作設計 ｜ v13.3 ｜
+    車城國小資訊老師 @ Google Gemini × Claude 協作設計 ｜ v13.4 ｜
     <a href="https://github.com/st887105/20260404" target="_blank"><i class="fa-brands fa-github me-1"></i>原始碼</a>
   </div>
 </footer>
@@ -435,12 +463,23 @@ const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbwJ5ot116YfctRy
 // Worker 會把請求轉發給 GAS，並加上正確的 CORS header
 const WORKER_URL = 'https://gas-proxy.sunny-f0b.workers.dev';
 
+// ==========================================
+// ★ v13.4：Claude Haiku Worker URL（學習單專用）★
+// 部署 claude-worksheet-worker.js 到 Cloudflare 後填入
+// 也可在後台「設定」→「Claude Worker URL」即時更新，不需重新部署前端
+// ==========================================
+let CLAUDE_WORKER_URL = (function() {
+  try {
+    return localStorage.getItem('claudeWorkerUrl') || 'https://YOUR-CLAUDE-WORKER.workers.dev';
+  } catch(e) {
+    return 'https://YOUR-CLAUDE-WORKER.workers.dev';
+  }
+})();
+
 // 規則：永遠以 DEFAULT_GAS_URL 為主，localStorage 只在使用者明確「套用」後才覆蓋
-// 無痕模式 / 一般模式 / 任何瀏覽器 → 行為完全一致，不需要手動重新連線
 function _loadGasUrl() {
   try {
     const saved = localStorage.getItem('gasUrl');
-    // 只有當 localStorage 裡的網址跟預設不同時，才代表使用者曾明確修改過
     return (saved && saved !== DEFAULT_GAS_URL) ? saved : DEFAULT_GAS_URL;
   } catch(e) {
     return DEFAULT_GAS_URL;
@@ -523,6 +562,21 @@ function resetToDefaultGasUrl() {
 }
 
 // ==========================================
+// ★ v13.4：Claude Worker URL 設定（設定頁用）
+// ==========================================
+function saveClaudeWorkerUrl() {
+  const input = document.getElementById('setting-claude-worker-url');
+  if (!input) return;
+  const url = input.value.trim();
+  if (!url || !url.startsWith('https://')) {
+    return Swal.fire({ icon: 'warning', title: '網址格式錯誤', text: '請貼上完整的 Cloudflare Worker URL（以 https:// 開頭）' });
+  }
+  CLAUDE_WORKER_URL = url;
+  try { localStorage.setItem('claudeWorkerUrl', url); } catch(e) {}
+  Swal.fire({ icon: 'success', title: '✅ Claude Worker URL 已更新！', text: '下次生成學習單即會使用新網址。', timer: 1500, showConfirmButton: false });
+}
+
+// ==========================================
 // 🌐 API 呼叫層 - Worker Fetch → JSONP 雙重保險
 // ==========================================
 const API = {
@@ -531,7 +585,7 @@ const API = {
     const isLarge = payloadStr.length > 1500 || action === 'uploadTaskData' || action === 'saveWorksheetToCloud';
 
     if (!isLarge) {
-      // 優先：透過 Cloudflare Worker 轉發（無 CORS 問題，任何瀏覽器狀態皆可）
+      // 優先：透過 Cloudflare Worker 轉發
       try {
         const workerResp = await fetch(
           WORKER_URL + '?payload=' + encodeURIComponent(payloadStr),
@@ -545,7 +599,7 @@ const API = {
         console.warn('[API] Worker 失敗，降級使用 JSONP：', workerErr.message);
       }
 
-      // Fallback：JSONP 直連 GAS（Worker 不可用時備援）
+      // Fallback：JSONP 直連 GAS
       return new Promise((resolve, reject) => {
         const cbName = '_gas_cb_' + Date.now() + '_' + Math.floor(Math.random() * 99999);
         let isDone = false;
@@ -575,7 +629,7 @@ const API = {
       });
 
     } else {
-      // 大資料：text/plain POST 直打 GAS（避免 CORS preflight）
+      // 大資料：text/plain POST 直打 GAS
       try {
         const resp = await fetch(app.gasUrl, {
           method: 'POST',
@@ -615,6 +669,7 @@ const API = {
   submitQuizResult:(p)=>API._submitWithRetry('submitQuizResult',{payload:p}),
   getTaskResults:(n)=>API._call('getTaskResults',{taskName:n}),
   analyzeClassWeakNodes:(n)=>API._call('analyzeClassWeakNodes',{taskName:n}),
+  // ★ v13.4：generateTeachingWorksheet 改由前端 Claude Worker 直呼叫，此 API 保留備用
   generateTeachingWorksheet:(n,g,s)=>API._call('generateTeachingWorksheet',{topNodes:n,grade:g,subject:s}),
   getGeminiSettings:()=>API._call('getGeminiSettings'),
   updateGeminiSettings:(m,p,pwd)=>API._call('updateGeminiSettings',{model:m,isPaid:p,pwd}),
@@ -669,30 +724,23 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // ==========================================
-// 🏫 精靈（Wizard）功能 - 完整實作
+// 🏫 精靈（Wizard）功能
 // ==========================================
-
-/** 更新精靈的節點預設按鈕 */
 function updateWizNodePresets() {
   const grade = document.getElementById('wiz-grade')?.value || '五年級';
   const subject = document.getElementById('wiz-subject')?.value || '數學';
   const presets = (PRESET_NODES[grade] || {})[subject] || [];
   const container = document.getElementById('wiz-node-presets');
   if (!container) return;
-
   if (!presets.length) { container.innerHTML = '<span class="text-muted small">（此年級/科目無預設節點）</span>'; return; }
-
   container.innerHTML = presets.map(node => {
     const active = wizSelectedNodes.includes(node) ? 'active' : '';
     return `<span class="node-preset-btn ${active}" onclick="toggleWizNode(this, '${esc(node)}')">${esc(node)}</span>`;
   }).join('');
-
-  // 更新表頭
   const th = document.getElementById('wiz-node-header');
   if (th) th.textContent = `弱點節點（從已選 ${wizSelectedNodes.length} 個）`;
 }
 
-/** 切換精靈節點選取狀態 */
 function toggleWizNode(el, node) {
   const idx = wizSelectedNodes.indexOf(node);
   if (idx >= 0) { wizSelectedNodes.splice(idx, 1); el.classList.remove('active'); }
@@ -701,7 +749,6 @@ function toggleWizNode(el, node) {
   _syncWizStudentNodeSelects();
 }
 
-/** 渲染已選節點清單 */
 function _renderWizSelectedNodes() {
   const container = document.getElementById('wiz-selected-nodes');
   if (!container) return;
@@ -716,15 +763,13 @@ function _renderWizSelectedNodes() {
   if (th) th.textContent = `弱點節點（從已選 ${wizSelectedNodes.length} 個）`;
 }
 
-/** 移除已選節點 */
 function removeWizNode(idx) {
   wizSelectedNodes.splice(idx, 1);
   _renderWizSelectedNodes();
-  updateWizNodePresets(); // 重繪按鈕狀態
+  updateWizNodePresets();
   _syncWizStudentNodeSelects();
 }
 
-/** 新增自訂節點 */
 function addWizCustomNode() {
   const input = document.getElementById('wiz-custom-node');
   if (!input) return;
@@ -739,7 +784,6 @@ function addWizCustomNode() {
   input.value = '';
 }
 
-/** 同步更新學生表格裡的節點下拉選單 */
 function _syncWizStudentNodeSelects() {
   const tbody = document.getElementById('wiz-student-tbody');
   if (!tbody) return;
@@ -750,7 +794,6 @@ function _syncWizStudentNodeSelects() {
   });
 }
 
-/** 新增一列學生 */
 function addWizStudentRow() {
   const tbody = document.getElementById('wiz-student-tbody');
   if (!tbody) return;
@@ -766,12 +809,10 @@ function addWizStudentRow() {
   tbody.appendChild(tr);
 }
 
-/** 批次新增學生列 */
 function addWizStudentRows(count) {
   for (let i = 0; i < count; i++) addWizStudentRow();
 }
 
-/** 收集精靈學生資料 */
 function _collectWizStudents() {
   const rows = document.querySelectorAll('#wiz-student-tbody tr');
   const students = [];
@@ -783,14 +824,13 @@ function _collectWizStudents() {
       students.push({
         number: num,
         name: name,
-        weakNodes: node ? [node] : wizSelectedNodes.slice(0, 3) // 未指定則套用前3個選定節點
+        weakNodes: node ? [node] : wizSelectedNodes.slice(0, 3)
       });
     }
   });
   return students;
 }
 
-/** 精靈：初始化資料庫 */
 async function wizardInitDB() {
   Swal.fire({ title: '初始化資料庫…', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
   try {
@@ -801,43 +841,28 @@ async function wizardInitDB() {
   }
 }
 
-/** 精靈：建立任務並出題 */
 async function wizardCreateAndGenerate() {
   const taskName = document.getElementById('wiz-task-name')?.value.trim() || '';
   const grade = document.getElementById('wiz-grade')?.value || '';
   const subject = document.getElementById('wiz-subject')?.value || '';
   const students = _collectWizStudents();
-
   if (!taskName) return Swal.fire({ icon: 'warning', title: '請輸入任務名稱' });
   if (!students.length) return Swal.fire({ icon: 'warning', title: '請輸入至少一位學生資料（座號）' });
-
   const uniqueNodes = [...new Set(students.flatMap(s => s.weakNodes).filter(isValidNode))];
-
   const summary = document.getElementById('wiz-summary');
-  if (summary) {
-    summary.style.display = '';
-    summary.innerHTML = `任務：<b>${esc(taskName)}</b>｜${grade}/${subject}｜${students.length} 位學生｜${uniqueNodes.length} 個節點`;
-  }
-
-  const pArea = document.getElementById('wiz-progress-area');
-  const pBar = document.getElementById('wiz-progress-bar');
-  const pMsg = document.getElementById('wiz-progress-msg');
-  const pEl = document.getElementById('wiz-elapsed');
+  if (summary) { summary.style.display = ''; summary.innerHTML = `任務：<b>${esc(taskName)}</b>｜${grade}/${subject}｜${students.length} 位學生｜${uniqueNodes.length} 個節點`; }
+  const pArea = document.getElementById('wiz-progress-area'), pBar = document.getElementById('wiz-progress-bar'), pMsg = document.getElementById('wiz-progress-msg'), pEl = document.getElementById('wiz-elapsed');
   if (pArea) pArea.style.display = '';
   if (pBar) pBar.style.width = '0%';
   if (pMsg) pMsg.textContent = '上傳學生名冊…';
   _waitStart = Date.now();
   startProgress(pMsg, pEl);
-
   try {
     await API.uploadTaskData(taskName, grade, subject, students, uniqueNodes);
     if (pBar) pBar.style.width = '10%';
     if (pMsg) pMsg.textContent = '✅ 名冊已儲存，開始 AI 出題…';
-
-    let gs = { isPaid: false };
-    try { gs = await API.getGeminiSettings(); } catch(e) {}
+    let gs = { isPaid: false }; try { gs = await API.getGeminiSettings(); } catch(e) {}
     const delay = gs.isPaid ? 500 : 6000;
-
     let batchIndex = 0, totalBatches = null;
     while (true) {
       const result = await API.generateBatch(uniqueNodes.length > 0 ? uniqueNodes : ['通用基礎練習'], grade, subject, batchIndex);
@@ -849,16 +874,13 @@ async function wizardCreateAndGenerate() {
       batchIndex++;
       await sleep(delay);
     }
-
     stopProgress();
     const elapsed = elapsedStr();
     if (pBar) pBar.style.width = '100%';
     if (pMsg) pMsg.innerHTML = `🎉 完成！耗時 <b>${elapsed}</b>`;
     if (pEl) pEl.textContent = '';
-
     app.taskList = await API.getTasks();
     populateAdminTaskDropdowns();
-
     Swal.fire({ icon: 'success', title: '🎉 任務建立完成！', html: `「${esc(taskName)}」已完成出題。<br><span class="badge bg-secondary">耗時：${elapsed}</span>`, confirmButtonText: '好的' });
   } catch(e) {
     stopProgress();
@@ -875,10 +897,7 @@ async function loadTasksForLogin() {
   sel.innerHTML = '<option value="">-- 連線中… --</option>';
   if (msg) msg.textContent = '';
   try {
-    const [tasks, helpUrl] = await Promise.all([
-      API.getTasks(),
-      API.getHelpUrl().catch(() => '')
-    ]);
+    const [tasks, helpUrl] = await Promise.all([API.getTasks(), API.getHelpUrl().catch(() => '')]);
     app.taskList = tasks;
     if (!tasks.length) {
       sel.innerHTML = '<option value="">-- 目前沒有測驗任務 --</option>';
@@ -957,7 +976,7 @@ async function studentLogin() {
 }
 
 // ==========================================
-// 🧪 練習模式（補救練習連結）
+// 🧪 練習模式
 // ==========================================
 async function initPracticeMode(taskName) {
   const sel = document.getElementById('login-task'), msg = document.getElementById('login-status-msg');
@@ -1330,39 +1349,214 @@ function toggleWsPreview() {
   }
 }
 
+// ==========================================
+// ★ v13.4：genWorksheet - 改用 Claude Haiku 前端直呼叫
+// 完全繞過 GAS，避免 30 秒執行限制
+// ==========================================
 async function genWorksheet() {
   const ws = document.getElementById('worksheet-area');
-  const topNodes = JSON.parse(ws.dataset.nodes || '[]'), grade = ws.dataset.grade, subject = ws.dataset.subject;
+  const topNodes = JSON.parse(ws.dataset.nodes || '[]');
+  const grade    = ws.dataset.grade;
+  const subject  = ws.dataset.subject;
   const taskName = ws.dataset.taskname || '';
+
   if (!topNodes.length) return Swal.fire({ icon: 'warning', title: '無弱點節點資料' });
+
+  // 檢查 Claude Worker URL 是否已設定
+  if (!CLAUDE_WORKER_URL || CLAUDE_WORKER_URL.includes('YOUR-CLAUDE-WORKER')) {
+    return Swal.fire({
+      icon: 'warning',
+      title: '尚未設定 Claude Worker URL',
+      html: `請到 <b>設定 → Claude Worker URL</b> 填入 Cloudflare Worker 網址。<br>
+             <span class="text-muted small">Worker 程式碼：<code>claude-worksheet-worker.js</code></span>`,
+      confirmButtonText: '前往設定',
+    }).then(r => {
+      if (r.isConfirmed) {
+        // 切換到設定 Tab
+        const tabEl = document.querySelector('[data-bs-target="#tab-settings"]');
+        if (tabEl) tabEl.click();
+        setTimeout(() => document.getElementById('setting-claude-worker-url')?.focus(), 400);
+      }
+    });
+  }
+
+  // 取得學習單 Prompt（從 GAS 讀取老師自訂的 prompt）
+  let worksheetPrompt = '';
+  try {
+    const prompts = await API.getSystemPrompts();
+    worksheetPrompt = subject === '國語'
+      ? (prompts.chineseWorksheetPrompt || '')
+      : (prompts.mathWorksheetPrompt || '');
+  } catch(e) {
+    console.warn('[genWorksheet] 無法取得自訂 Prompt，使用預設');
+  }
+
+  // 組合最終 prompt
+  const nodeList = topNodes.map((n, i) => `${i + 1}. ${n}`).join('\n');
+  const finalPrompt = worksheetPrompt
+    ? worksheetPrompt
+        .replace(/\{\{GRADE\}\}/g, grade)
+        .replace(/\{\{NODES\}\}/g, nodeList)
+        .replace(/\{\{PDF_CONTEXT\}\}/g, '')
+    : _buildDefaultWsPrompt(grade, subject, nodeList);
+
+  // 切換 UI 至生成中狀態
   document.getElementById('ws-state-idle').style.display = 'none';
   document.getElementById('ws-state-done').style.display = 'none';
   document.getElementById('ws-gen-progress').style.display = '';
   document.getElementById('ws-preview-area').style.display = 'none';
   app.wsPreviewOpen = false;
-  const progBar = document.getElementById('ws-progress-bar'), progMsg = document.getElementById('ws-progress-msg');
-  progBar.style.width = '10%'; progMsg.textContent = WAITING_MSGS[0]; _waitStart = Date.now();
+
+  const progBar = document.getElementById('ws-progress-bar');
+  const progMsg = document.getElementById('ws-progress-msg');
+  _waitStart = Date.now();
+
+  // 進度條動畫（純前端，不依賴 GAS 回報）
+  let progPct = 5;
+  progBar.style.width = progPct + '%';
+  progMsg.textContent = '✨ 連線 Claude Haiku 中…';
+
+  const progTick = setInterval(() => {
+    // 前 10 秒快速推進到 60%，之後緩慢增加
+    const elapsed = (Date.now() - _waitStart) / 1000;
+    if (elapsed < 10) progPct = Math.min(60, 5 + elapsed * 5.5);
+    else progPct = Math.min(90, 60 + (elapsed - 10) * 1.5);
+    progBar.style.width = Math.round(progPct) + '%';
+    const s = Math.round(elapsed);
+    progMsg.textContent = `✨ Claude Haiku 生成中… ${s} 秒`;
+  }, 500);
+
+  try {
+    // ★ 直接呼叫 Cloudflare Worker（不走 GAS）
+    const resp = await fetch(CLAUDE_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: finalPrompt,
+        maxTokens: 4096,
+        systemPrompt: '你是台灣國小教育專家，請生成完整的繁體中文補救學習單 HTML。只輸出 HTML，不要有任何前言或說明文字。'
+      })
+    });
+
+    clearInterval(progTick);
+
+    if (!resp.ok) {
+      let errMsg = `HTTP ${resp.status}`;
+      try { const errData = await resp.json(); errMsg = errData.error || errMsg; } catch(e) {}
+      throw new Error(errMsg);
+    }
+
+    const result = await resp.json();
+    if (result.status !== 'success' || !result.content) {
+      throw new Error(result.error || 'Claude 回傳空白內容');
+    }
+
+    // 完成！
+    progBar.style.width = '100%';
+    progMsg.textContent = `✅ 學習單生成完成！（耗時 ${elapsedStr()}）`;
+
+    app.wsHtml = _sanitizeWsHtml(result.content);
+
+    // 非同步儲存到 GAS 雲端（不阻塞 UI）
+    if (taskName) {
+      API.saveWorksheetToCloud(taskName, grade, subject, app.wsHtml)
+        .then(r => { if (r && r.saved) console.log('[Worksheet] 已儲存至雲端'); })
+        .catch(e => console.warn('[Worksheet] 雲端儲存失敗：', e.message));
+    }
+
+    setTimeout(() => {
+      document.getElementById('ws-gen-progress').style.display = 'none';
+      document.getElementById('ws-state-done').style.display = '';
+      document.getElementById('ws-toggle-btn').innerHTML = '<i class="fa-solid fa-eye me-1"></i>展開預覽';
+    }, 1200);
+
+    Swal.fire({
+      icon: 'success',
+      title: '✨ 學習單已生成！',
+      html: `Claude Haiku 完成出題<br>
+             <span class="badge bg-secondary">耗時：${elapsedStr()}</span>
+             ${result.usage ? `<br><span class="text-muted small">Token 用量：${result.usage.input_tokens || 0} in / ${result.usage.output_tokens || 0} out</span>` : ''}`,
+      timer: 3000,
+      showConfirmButton: false
+    });
+
+  } catch(e) {
+    clearInterval(progTick);
+    document.getElementById('ws-gen-progress').style.display = 'none';
+    document.getElementById('ws-state-idle').style.display = '';
+
+    // 如果 Claude Worker 失敗，提供 GAS Fallback 選項
+    const fallbackResult = await Swal.fire({
+      icon: 'error',
+      title: 'Claude 生成失敗',
+      html: `<b>錯誤：</b>${esc(e.message)}<br><br>
+             <div class="alert alert-warning small text-start mb-0">
+               <b>可能原因：</b><br>
+               1. Claude Worker URL 未正確設定<br>
+               2. Worker 尚未部署 API Key<br>
+               3. 網路連線問題
+             </div>`,
+      showCancelButton: true,
+      confirmButtonText: '改用 GAS 生成（較慢）',
+      cancelButtonText: '取消',
+    });
+
+    if (fallbackResult.isConfirmed) {
+      await _genWorksheetFallbackGAS(topNodes, grade, subject, taskName);
+    }
+  }
+}
+
+/** 預設學習單 Prompt（當老師未設定自訂 Prompt 時使用）*/
+function _buildDefaultWsPrompt(grade, subject, nodeList) {
+  if (subject === '國語') {
+    return `請為「${grade}」國小學生設計一份 A4 補救學習單（完整 HTML 格式）。
+弱點節點：
+${nodeList}
+
+要求：
+1. 包含閱讀文本、字詞練習、閱讀理解題（Level C/B/A 各2題）、解答欄
+2. 使用 CSS 讓版面美觀，適合列印（A4）
+3. 輸出完整 HTML（包含 <!DOCTYPE html>）
+4. 繁體中文，符合台灣國小課綱`;
+  }
+  return `請為「${grade}」國小學生設計一份 A4 補救學習單（完整 HTML 格式）。
+弱點節點：
+${nodeList}
+
+要求：
+1. 包含概念說明、例題、練習題（Level C/B/A 各2題）、解答欄
+2. 使用 CSS 讓版面美觀，適合列印（A4）
+3. 輸出完整 HTML（包含 <!DOCTYPE html>）
+4. 繁體中文，符合台灣國小課綱`;
+}
+
+/** GAS Fallback（Claude Worker 失敗時備用，行為與 v13.3 相同）*/
+async function _genWorksheetFallbackGAS(topNodes, grade, subject, taskName) {
+  document.getElementById('ws-state-idle').style.display = 'none';
+  document.getElementById('ws-gen-progress').style.display = '';
+  const progBar = document.getElementById('ws-progress-bar');
+  const progMsg = document.getElementById('ws-progress-msg');
+  progBar.style.width = '10%';
+  progMsg.textContent = '🔄 改用 GAS 生成（較慢）…';
+  _waitStart = Date.now();
   const rot = setInterval(() => { progMsg.textContent = WAITING_MSGS[Math.floor(Math.random() * WAITING_MSGS.length)]; progBar.style.width = Math.min(90, 10 + Math.round((Date.now() - _waitStart) / 1000) * 2) + '%'; }, 9000);
   const tick = setInterval(() => { progBar.style.width = Math.min(90, 10 + Math.round((Date.now() - _waitStart) / 1000) * 1.5) + '%'; }, 2000);
   try {
     const htmlContent = await API.generateTeachingWorksheet(topNodes, grade, subject);
     clearInterval(rot); clearInterval(tick);
-    progBar.style.width = '100%'; progMsg.textContent = '✅ 學習單生成完成！';
+    progBar.style.width = '100%'; progMsg.textContent = '✅ GAS 學習單生成完成！';
     app.wsHtml = _sanitizeWsHtml(htmlContent);
-    if (taskName) {
-      API.saveWorksheetToCloud(taskName, grade, subject, app.wsHtml)
-        .then(r => { if (r && r.saved) console.log('[Worksheet] 已儲存至雲端'); })
-        .catch(e => console.warn('[Worksheet] 雲端儲存失敗：' + e.message));
-    }
+    if (taskName) API.saveWorksheetToCloud(taskName, grade, subject, app.wsHtml).catch(e => console.warn(e.message));
     document.getElementById('ws-state-done').style.display = '';
     document.getElementById('ws-toggle-btn').innerHTML = '<i class="fa-solid fa-eye me-1"></i>展開預覽';
     setTimeout(() => { document.getElementById('ws-gen-progress').style.display = 'none'; }, 1800);
-    Swal.fire({ icon: 'success', title: '學習單已生成！', text: '請點「展開預覽」查看，或選擇教師版/學生版列印。', timer: 2500, showConfirmButton: false });
+    Swal.fire({ icon: 'success', title: '學習單已生成！', timer: 2000, showConfirmButton: false });
   } catch(e) {
     clearInterval(rot); clearInterval(tick);
     document.getElementById('ws-gen-progress').style.display = 'none';
     document.getElementById('ws-state-idle').style.display = '';
-    Swal.fire({ icon: 'error', title: '生成失敗', text: e.message, footer: '若為 API 配額問題，請等 60 秒後重試' });
+    Swal.fire({ icon: 'error', title: 'GAS 生成也失敗', text: e.message, footer: '若為 API 配額問題，請等 60 秒後重試' });
   }
 }
 
@@ -1488,7 +1682,6 @@ function renderQuestion() {
   document.getElementById('quiz-question-text').textContent = q.text || '';
   document.getElementById('quiz-hint').style.display = 'none';
   document.getElementById('next-btn').disabled = true;
-
   const optContainer = document.getElementById('quiz-options');
   if (q.type === 'fill') {
     optContainer.innerHTML = `<input type="text" class="fill-input" id="fill-answer" placeholder="請輸入答案" oninput="onFillInput(this)">`;
@@ -1531,7 +1724,6 @@ function nextQuestion() {
     if (!selectedBtn) return;
     selected = selectedBtn.querySelector('.option-prefix').textContent.trim();
     correct = selected === String(q.answer || '').trim();
-    // 顯示正誤反饋
     document.querySelectorAll('.option-btn').forEach(b => {
       b.disabled = true;
       const lbl = b.querySelector('.option-prefix').textContent.trim();
@@ -1575,7 +1767,6 @@ async function finishQuiz() {
       </div>
     </div>`
   ).join('');
-  // 上傳成績
   try {
     await API.submitQuizResult({
       taskName: app.currentTask?.taskName || '',
@@ -1589,16 +1780,14 @@ async function finishQuiz() {
 // ==========================================
 // ✏️ 計算紙
 // ==========================================
-let _resizeCanvas = null; // 提升為外部可呼叫
+let _resizeCanvas = null;
 
 function initCanvas() {
   const canvas = document.getElementById('scratch-pad');
   if (!canvas) return;
   try { sigPad = new SignaturePad(canvas, { backgroundColor: '#fff', penColor: '#1e3a5f' }); } catch(e) {}
-
   _resizeCanvas = function() {
     const ratio = Math.max(window.devicePixelRatio || 1, 1);
-    // 必須先確保 canvas 的父元素是可見的，才能正確取得 offsetWidth
     const data = sigPad?.toData ? sigPad.toData() : null;
     canvas.width = canvas.offsetWidth * ratio;
     canvas.height = canvas.offsetHeight * ratio;
@@ -1606,23 +1795,14 @@ function initCanvas() {
     if (ctx) ctx.scale(ratio, ratio);
     if (sigPad) { sigPad.clear(); if (data && data.length) sigPad.fromData(data); }
   };
-
   window.addEventListener('resize', _resizeCanvas);
-  // 初始時 modal 是隱藏的，offsetWidth=0，所以這裡先不呼叫
-  // 等到第一次打開時才 resize（見 toggleScratch）
 }
 
 function toggleScratch() {
   const modal = document.getElementById('scratch-modal');
   const isOpening = !modal.classList.contains('is-open');
   modal.classList.toggle('is-open');
-
-  if (isOpening) {
-    // modal 變為可見後，延一個 frame 讓瀏覽器計算好尺寸再 resize
-    requestAnimationFrame(() => {
-      if (_resizeCanvas) _resizeCanvas();
-    });
-  }
+  if (isOpening) { requestAnimationFrame(() => { if (_resizeCanvas) _resizeCanvas(); }); }
 }
 
 function closeScratch() { document.getElementById('scratch-modal').classList.remove('is-open'); }
@@ -1640,6 +1820,9 @@ async function loadSettingsTab() {
     document.getElementById('setting-quiz-count').value = settings.quizCount;
     document.getElementById('setting-folder-id').value = folderId || '';
     document.getElementById('setting-help-url').value = helpUrl || '';
+    // v13.4：顯示當前 Claude Worker URL
+    const cwInput = document.getElementById('setting-claude-worker-url');
+    if (cwInput) cwInput.value = CLAUDE_WORKER_URL || '';
     const modelSel = document.getElementById('setting-gemini-model');
     const savedModel = gemini.model || 'gemma-4-31b-it';
     if (![...modelSel.options].some(o => o.value === savedModel)) {
